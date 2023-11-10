@@ -305,7 +305,7 @@ func (f *sftpDriver) Filewrite(r *sftp.Request) (w io.WriterAt, err error) {
 	wa := &writerAt{w: pw, wg: &sync.WaitGroup{}}
 	wa.wg.Add(1)
 	go func() {
-		_, err = clnt.PutObject(r.Context(), bucket, object, pr, -1, minio.PutObjectOptions{SendContentMd5: true})
+		_, err := clnt.PutObject(r.Context(), bucket, object, pr, -1, minio.PutObjectOptions{SendContentMd5: true})
 		pr.CloseWithError(err)
 		wa.wg.Done()
 	}()

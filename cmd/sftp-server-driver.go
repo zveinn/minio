@@ -213,9 +213,8 @@ func (w *writerAt) Close() error {
 const bufferLength = 1000
 
 type writerAt struct {
-	w    *io.PipeWriter
-	wg   *sync.WaitGroup
-	file string
+	w  *io.PipeWriter
+	wg *sync.WaitGroup
 
 	nextOffset int64
 	remaining  int
@@ -227,7 +226,6 @@ type writerAt struct {
 func (w *writerAt) placeBytesInBuffer(b []byte, offset int64) (err error) {
 	for i := 0; i < bufferLength; i++ {
 		if len(w.buffers[i]) == 0 || w.offsets[i] == 0 {
-			fmt.Println("Q", offset, "//", w.nextOffset, "//", i, w.file)
 			w.offsets[i] = offset
 			w.buffers[i] = make([]byte, len(b))
 			copy(w.buffers[i], b)
@@ -239,10 +237,8 @@ func (w *writerAt) placeBytesInBuffer(b []byte, offset int64) (err error) {
 }
 
 func (w *writerAt) flushBuffers() (err error) {
-	fmt.Println("F:", w.nextOffset, w.file)
 	for i := 0; i < bufferLength; i++ {
 		if w.offsets[i] == w.nextOffset {
-			fmt.Println("W", w.offsets[i], "//", w.nextOffset, "//", i, w.file)
 			n, err := w.w.Write(w.buffers[i])
 			if err != nil {
 				return err
@@ -270,11 +266,9 @@ func (w *writerAt) WriteAt(b []byte, offset int64) (n int, err error) {
 			return 0, err
 		}
 		n = len(b)
-		// return len(b), nil
 	} else {
 		w.nextOffset += int64(len(b))
 		n, err = w.w.Write(b)
-
 	}
 
 	if w.remaining > 0 {
@@ -308,10 +302,9 @@ func (f *sftpDriver) Filewrite(r *sftp.Request) (w io.WriterAt, err error) {
 
 	pr, pw := io.Pipe()
 
-	wa := &writerAt{w: pw, wg: &sync.WaitGroup{}, file: bucket + "/" + object}
+	wa := &writerAt{w: pw, wg: &sync.WaitGroup{}}
 	wa.wg.Add(1)
 	go func() {
-		fmt.Println("WRITING: ", bucket, object)
 		_, err = clnt.PutObject(r.Context(), bucket, object, pr, -1, minio.PutObjectOptions{SendContentMd5: true})
 		pr.CloseWithError(err)
 		wa.wg.Done()

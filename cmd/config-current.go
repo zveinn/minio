@@ -362,7 +362,7 @@ func validateSubSysConfig(ctx context.Context, s config.Config, subSys string, o
 		}
 	case config.IdentityOpenIDSubSys:
 		if _, err := openid.LookupConfig(s,
-			NewHTTPTransport(), xhttp.DrainBody, globalSite.Region); err != nil {
+			NewHTTPTransport(), xhttp.DrainBody, globalSite.Region()); err != nil {
 			return err
 		}
 	case config.IdentityLDAPSubSys:
@@ -383,7 +383,7 @@ func validateSubSysConfig(ctx context.Context, s config.Config, subSys string, o
 		}
 	case config.IdentityPluginSubSys:
 		if _, err := idplugin.LookupConfig(s[config.IdentityPluginSubSys][config.Default],
-			NewHTTPTransport(), xhttp.DrainBody, globalSite.Region); err != nil {
+			NewHTTPTransport(), xhttp.DrainBody, globalSite.Region()); err != nil {
 			return err
 		}
 	case config.SubnetSubSys:
@@ -530,10 +530,11 @@ func lookupConfigs(s config.Config, objAPI ObjectLayer) {
 	// but not federation.
 	globalBucketFederation = etcdCfg.PathPrefix == "" && etcdCfg.Enabled
 
-	globalSite, err = config.LookupSite(s[config.SiteSubSys][config.Default], s[config.RegionSubSys][config.Default])
+	siteCfg, err := config.LookupSite(s[config.SiteSubSys][config.Default], s[config.RegionSubSys][config.Default])
 	if err != nil {
 		configLogIf(ctx, fmt.Errorf("Invalid site configuration: %w", err))
 	}
+	globalSite.Update(siteCfg)
 
 	globalAutoEncryption = crypto.LookupAutoEncryption() // Enable auto-encryption if enabled
 	if globalAutoEncryption && GlobalKMS == nil {
@@ -575,7 +576,7 @@ func applyDynamicConfigForSubSys(ctx context.Context, objAPI ObjectLayer, s conf
 			configLogIf(ctx, fmt.Errorf("Invalid api configuration: %w", err))
 		}
 
-		globalAPIConfig.init(apiConfig, setDriveCounts)
+		globalAPIConfig.init(apiConfig, setDriveCounts, objAPI.Legacy())
 		autoGenerateRootCredentials() // Generate the KMS root credentials here since we don't know whether API root access is disabled until now.
 		setRemoteInstanceTransport(NewHTTPTransportWithTimeout(apiConfig.RemoteTransportDeadline))
 	case config.CompressionSubSys:
@@ -671,14 +672,12 @@ func applyDynamicConfigForSubSys(ctx context.Context, objAPI ObjectLayer, s conf
 				configLogIf(ctx, fmt.Errorf("Unable to initialize storage class config: %w", err))
 				break
 			}
-			// if we validated all setDriveCounts and it was successful
-			// proceed to store the correct storage class globally.
-			if i == len(setDriveCounts)-1 {
+			if i == 0 {
 				globalStorageClass.Update(sc)
 			}
 		}
 	case config.SubnetSubSys:
-		subnetConfig, err := subnet.LookupConfig(s[config.SubnetSubSys][config.Default], globalProxyTransport)
+		subnetConfig, err := subnet.LookupConfig(s[config.SubnetSubSys][config.Default], globalRemoteTargetTransport)
 		if err != nil {
 			configLogIf(ctx, fmt.Errorf("Unable to parse subnet configuration: %w", err))
 		} else {
@@ -755,41 +754,33 @@ func autoGenerateRootCredentials() {
 		return
 	}
 
-	if manager, ok := GlobalKMS.(kms.KeyManager); ok {
-		stat, err := GlobalKMS.Stat(GlobalContext)
-		if err != nil {
-			kmsLogIf(GlobalContext, err, "Unable to generate root credentials using KMS")
-			return
-		}
+	aKey, err := GlobalKMS.MAC(GlobalContext, &kms.MACRequest{Message: []byte("root access key")})
+	if errors.Is(err, kes.ErrNotAllowed) || errors.Is(err, errors.ErrUnsupported) {
+		return // If we don't have permission to compute the HMAC, don't change the cred.
+	}
+	if err != nil {
+		logger.Fatal(err, "Unable to generate root access key using KMS")
+	}
 
-		aKey, err := manager.HMAC(GlobalContext, stat.DefaultKey, []byte("root access key"))
-		if errors.Is(err, kes.ErrNotAllowed) {
-			return // If we don't have permission to compute the HMAC, don't change the cred.
-		}
-		if err != nil {
-			logger.Fatal(err, "Unable to generate root access key using KMS")
-		}
+	sKey, err := GlobalKMS.MAC(GlobalContext, &kms.MACRequest{Message: []byte("root secret key")})
+	if err != nil {
+		// Here, we must have permission. Otherwise, we would have failed earlier.
+		logger.Fatal(err, "Unable to generate root secret key using KMS")
+	}
 
-		sKey, err := manager.HMAC(GlobalContext, stat.DefaultKey, []byte("root secret key"))
-		if err != nil {
-			// Here, we must have permission. Otherwise, we would have failed earlier.
-			logger.Fatal(err, "Unable to generate root secret key using KMS")
-		}
+	accessKey, err := auth.GenerateAccessKey(20, bytes.NewReader(aKey))
+	if err != nil {
+		logger.Fatal(err, "Unable to generate root access key")
+	}
+	secretKey, err := auth.GenerateSecretKey(32, bytes.NewReader(sKey))
+	if err != nil {
+		logger.Fatal(err, "Unable to generate root secret key")
+	}
 
-		accessKey, err := auth.GenerateAccessKey(20, bytes.NewReader(aKey))
-		if err != nil {
-			logger.Fatal(err, "Unable to generate root access key")
-		}
-		secretKey, err := auth.GenerateSecretKey(32, bytes.NewReader(sKey))
-		if err != nil {
-			logger.Fatal(err, "Unable to generate root secret key")
-		}
-
-		logger.Info("Automatically generated root access key and secret key with the KMS")
-		globalActiveCred = auth.Credentials{
-			AccessKey: accessKey,
-			SecretKey: secretKey,
-		}
+	logger.Info("Automatically generated root access key and secret key with the KMS")
+	globalActiveCred = auth.Credentials{
+		AccessKey: accessKey,
+		SecretKey: secretKey,
 	}
 }
 

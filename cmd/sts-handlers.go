@@ -155,12 +155,12 @@ func checkAssumeRoleAuth(ctx context.Context, r *http.Request) (auth.Credentials
 		return auth.Credentials{}, ErrAccessDenied
 	}
 
-	s3Err := isReqAuthenticated(ctx, r, globalSite.Region, serviceSTS)
+	s3Err := isReqAuthenticated(ctx, r, globalSite.Region(), serviceSTS)
 	if s3Err != ErrNone {
 		return auth.Credentials{}, s3Err
 	}
 
-	user, _, s3Err := getReqAccessKeyV4(r, globalSite.Region, serviceSTS)
+	user, _, s3Err := getReqAccessKeyV4(r, globalSite.Region(), serviceSTS)
 	if s3Err != ErrNone {
 		return auth.Credentials{}, s3Err
 	}
@@ -929,7 +929,9 @@ func (sts *stsAPIHandlers) AssumeRoleWithCustomToken(w http.ResponseWriter, r *h
 	ctx := newContext(r, w, "AssumeRoleWithCustomToken")
 
 	claims := make(map[string]interface{})
-	defer logger.AuditLog(ctx, w, r, claims)
+
+	auditLogFilterKeys := []string{stsToken}
+	defer logger.AuditLog(ctx, w, r, claims, auditLogFilterKeys...)
 
 	if !globalIAMSys.Initialized() {
 		writeSTSErrorResponse(ctx, w, ErrSTSIAMNotInitialized, errIAMNotInitialized)

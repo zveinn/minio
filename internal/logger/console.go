@@ -25,7 +25,6 @@ import (
 	"time"
 
 	"github.com/minio/minio/internal/color"
-	c "github.com/minio/pkg/v2/console"
 	"github.com/minio/pkg/v2/logger/message/log"
 )
 
@@ -67,13 +66,16 @@ func Fatal(err error, msg string, data ...interface{}) {
 }
 
 func fatal(err error, msg string, data ...interface{}) {
-	var errMsg string
-	if msg != "" {
-		errMsg = errorFmtFunc(fmt.Sprintf(msg, data...), err, jsonFlag)
+	if msg == "" {
+		if len(data) > 0 {
+			msg = fmt.Sprint(data...)
+		} else {
+			msg = "a fatal error"
+		}
 	} else {
-		errMsg = err.Error()
+		msg = fmt.Sprintf(msg, data...)
 	}
-	consoleLog(fatalMessage, errMsg)
+	consoleLog(fatalMessage, errorFmtFunc(msg, err, jsonFlag))
 }
 
 var fatalMessage fatalMsg
@@ -96,8 +98,7 @@ func (f fatalMsg) json(msg string, args ...interface{}) {
 	if err != nil {
 		panic(err)
 	}
-	fmt.Println(string(logJSON))
-
+	fmt.Fprintln(Output, string(logJSON))
 	ExitFunc(1)
 }
 
@@ -136,16 +137,16 @@ func (f fatalMsg) pretty(msg string, args ...interface{}) {
 			ansiSaveAttributes()
 			// Print banner with or without the log tag
 			if !tagPrinted {
-				c.Print(logBanner)
+				fmt.Fprint(Output, logBanner)
 				tagPrinted = true
 			} else {
-				c.Print(emptyBanner)
+				fmt.Fprint(Output, emptyBanner)
 			}
 			// Restore the text color of the error message
 			ansiRestoreAttributes()
 			ansiMoveRight(bannerWidth)
 			// Continue  error message printing
-			c.Println(line)
+			fmt.Fprintln(Output, line)
 			break
 		}
 	}
@@ -173,7 +174,7 @@ func (i infoMsg) json(msg string, args ...interface{}) {
 	if err != nil {
 		panic(err)
 	}
-	fmt.Println(string(logJSON))
+	fmt.Fprintln(Output, string(logJSON))
 }
 
 func (i infoMsg) quiet(msg string, args ...interface{}) {
@@ -181,14 +182,15 @@ func (i infoMsg) quiet(msg string, args ...interface{}) {
 
 func (i infoMsg) pretty(msg string, args ...interface{}) {
 	if msg == "" {
-		c.Println(args...)
+		fmt.Fprintln(Output, args...)
+	} else {
+		fmt.Fprintf(Output, msg, args...)
 	}
-	c.Printf(msg, args...)
 }
 
 type errorMsg struct{}
 
-var errorm errorMsg
+var errorMessage errorMsg
 
 func (i errorMsg) json(msg string, args ...interface{}) {
 	var message string
@@ -206,7 +208,7 @@ func (i errorMsg) json(msg string, args ...interface{}) {
 	if err != nil {
 		panic(err)
 	}
-	fmt.Println(string(logJSON))
+	fmt.Fprintln(Output, string(logJSON))
 }
 
 func (i errorMsg) quiet(msg string, args ...interface{}) {
@@ -215,9 +217,10 @@ func (i errorMsg) quiet(msg string, args ...interface{}) {
 
 func (i errorMsg) pretty(msg string, args ...interface{}) {
 	if msg == "" {
-		c.Println(args...)
+		fmt.Fprintln(Output, args...)
+	} else {
+		fmt.Fprintf(Output, msg, args...)
 	}
-	c.Printf(msg, args...)
 }
 
 // Error :
@@ -225,7 +228,7 @@ func Error(msg string, data ...interface{}) {
 	if DisableErrorLog {
 		return
 	}
-	consoleLog(errorm, msg, data...)
+	consoleLog(errorMessage, msg, data...)
 }
 
 // Info :

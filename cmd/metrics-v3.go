@@ -29,19 +29,36 @@ import (
 //
 // These are paths under the top-level /minio/metrics/v3 metrics endpoint. Each
 // of these paths returns a set of V3 metrics.
+//
+// Per-bucket metrics endpoints always start with /bucket and the bucket name is
+// appended to the path. e.g. if the collector path is /bucket/api, the endpoint
+// for the bucket "mybucket" would be /minio/metrics/v3/bucket/api/mybucket
 const (
 	apiRequestsCollectorPath collectorPath = "/api/requests"
-	apiBucketCollectorPath   collectorPath = "/api/bucket"
+
+	bucketAPICollectorPath         collectorPath = "/bucket/api"
+	bucketReplicationCollectorPath collectorPath = "/bucket/replication"
 
 	systemNetworkInternodeCollectorPath collectorPath = "/system/network/internode"
 	systemDriveCollectorPath            collectorPath = "/system/drive"
+	systemMemoryCollectorPath           collectorPath = "/system/memory"
+	systemCPUCollectorPath              collectorPath = "/system/cpu"
 	systemProcessCollectorPath          collectorPath = "/system/process"
-	systemGoCollectorPath               collectorPath = "/system/go"
+
+	debugGoCollectorPath collectorPath = "/debug/go"
 
 	clusterHealthCollectorPath       collectorPath = "/cluster/health"
 	clusterUsageObjectsCollectorPath collectorPath = "/cluster/usage/objects"
 	clusterUsageBucketsCollectorPath collectorPath = "/cluster/usage/buckets"
 	clusterErasureSetCollectorPath   collectorPath = "/cluster/erasure-set"
+	clusterIAMCollectorPath          collectorPath = "/cluster/iam"
+	clusterConfigCollectorPath       collectorPath = "/cluster/config"
+
+	auditCollectorPath         collectorPath = "/audit"
+	loggerWebhookCollectorPath collectorPath = "/logger/webhook"
+	replicationCollectorPath   collectorPath = "/replication"
+	notificationCollectorPath  collectorPath = "/notification"
+	scannerCollectorPath       collectorPath = "/scanner"
 )
 
 const (
@@ -85,20 +102,45 @@ func newMetricGroups(r *prometheus.Registry) *metricsV3Collection {
 			loadAPIRequestsNetworkMetrics),
 	)
 
-	apiBucketMG := NewBucketMetricsGroup(apiBucketCollectorPath,
+	bucketAPIMG := NewBucketMetricsGroup(bucketAPICollectorPath,
 		[]MetricDescriptor{
-			apiBucketTrafficRecvBytesMD,
-			apiBucketTrafficSentBytesMD,
+			bucketAPITrafficRecvBytesMD,
+			bucketAPITrafficSentBytesMD,
 
-			apiBucketRequestsInFlightMD,
-			apiBucketRequestsTotalMD,
-			apiBucketRequestsCanceledMD,
-			apiBucketRequests4xxErrorsMD,
-			apiBucketRequests5xxErrorsMD,
+			bucketAPIRequestsInFlightMD,
+			bucketAPIRequestsTotalMD,
+			bucketAPIRequestsCanceledMD,
+			bucketAPIRequests4xxErrorsMD,
+			bucketAPIRequests5xxErrorsMD,
 
-			apiBucketRequestsTTFBSecondsDistributionMD,
+			bucketAPIRequestsTTFBSecondsDistributionMD,
 		},
-		JoinBucketLoaders(loadAPIBucketHTTPMetrics, loadAPIBucketTTFBMetrics),
+		JoinBucketLoaders(loadBucketAPIHTTPMetrics, loadBucketAPITTFBMetrics),
+	)
+
+	bucketReplicationMG := NewBucketMetricsGroup(bucketReplicationCollectorPath,
+		[]MetricDescriptor{
+			bucketReplLastHrFailedBytesMD,
+			bucketReplLastHrFailedCountMD,
+			bucketReplLastMinFailedBytesMD,
+			bucketReplLastMinFailedCountMD,
+			bucketReplLatencyMsMD,
+			bucketReplProxiedDeleteTaggingRequestsTotalMD,
+			bucketReplProxiedGetRequestsFailuresMD,
+			bucketReplProxiedGetRequestsTotalMD,
+			bucketReplProxiedGetTaggingRequestsFailuresMD,
+			bucketReplProxiedGetTaggingRequestsTotalMD,
+			bucketReplProxiedHeadRequestsFailuresMD,
+			bucketReplProxiedHeadRequestsTotalMD,
+			bucketReplProxiedPutTaggingRequestsFailuresMD,
+			bucketReplProxiedPutTaggingRequestsTotalMD,
+			bucketReplSentBytesMD,
+			bucketReplSentCountMD,
+			bucketReplTotalFailedBytesMD,
+			bucketReplTotalFailedCountMD,
+			bucketReplProxiedDeleteTaggingRequestsFailuresMD,
+		},
+		loadBucketReplicationMetrics,
 	)
 
 	systemNetworkInternodeMG := NewMetricsGroup(systemNetworkInternodeCollectorPath,
@@ -112,6 +154,57 @@ func newMetricGroups(r *prometheus.Registry) *metricsV3Collection {
 		loadNetworkInternodeMetrics,
 	)
 
+	systemMemoryMG := NewMetricsGroup(systemMemoryCollectorPath,
+		[]MetricDescriptor{
+			memTotalMD,
+			memUsedMD,
+			memFreeMD,
+			memAvailableMD,
+			memBuffersMD,
+			memCacheMD,
+			memSharedMD,
+			memUsedPercMD,
+		},
+		loadMemoryMetrics,
+	)
+
+	systemCPUMG := NewMetricsGroup(systemCPUCollectorPath,
+		[]MetricDescriptor{
+			sysCPUAvgIdleMD,
+			sysCPUAvgIOWaitMD,
+			sysCPULoadMD,
+			sysCPULoadPercMD,
+			sysCPUNiceMD,
+			sysCPUStealMD,
+			sysCPUSystemMD,
+			sysCPUUserMD,
+		},
+		loadCPUMetrics,
+	)
+
+	systemProcessMG := NewMetricsGroup(systemProcessCollectorPath,
+		[]MetricDescriptor{
+			processLocksReadTotalMD,
+			processLocksWriteTotalMD,
+			processCPUTotalSecondsMD,
+			processGoRoutineTotalMD,
+			processIORCharBytesMD,
+			processIOReadBytesMD,
+			processIOWCharBytesMD,
+			processIOWriteBytesMD,
+			processStarttimeSecondsMD,
+			processUptimeSecondsMD,
+			processFileDescriptorLimitTotalMD,
+			processFileDescriptorOpenTotalMD,
+			processSyscallReadTotalMD,
+			processSyscallWriteTotalMD,
+			processResidentMemoryBytesMD,
+			processVirtualMemoryBytesMD,
+			processVirtualMemoryMaxBytesMD,
+		},
+		loadProcessMetrics,
+	)
+
 	systemDriveMG := NewMetricsGroup(systemDriveCollectorPath,
 		[]MetricDescriptor{
 			driveUsedBytesMD,
@@ -121,11 +214,11 @@ func newMetricGroups(r *prometheus.Registry) *metricsV3Collection {
 			driveFreeInodesMD,
 			driveTotalInodesMD,
 			driveTimeoutErrorsMD,
+			driveIOErrorsMD,
 			driveAvailabilityErrorsMD,
 			driveWaitingIOMD,
 			driveAPILatencyMD,
-			driveHealingMD,
-			driveOnlineMD,
+			driveHealthMD,
 
 			driveOfflineCountMD,
 			driveOnlineCountMD,
@@ -199,21 +292,119 @@ func newMetricGroups(r *prometheus.Registry) *metricsV3Collection {
 			erasureSetOnlineDrivesCountMD,
 			erasureSetHealingDrivesCountMD,
 			erasureSetHealthMD,
+			erasureSetReadToleranceMD,
+			erasureSetWriteToleranceMD,
+			erasureSetReadHealthMD,
+			erasureSetWriteHealthMD,
 		},
 		loadClusterErasureSetMetrics,
 	)
 
+	clusterNotificationMG := NewMetricsGroup(notificationCollectorPath,
+		[]MetricDescriptor{
+			notificationCurrentSendInProgressMD,
+			notificationEventsErrorsTotalMD,
+			notificationEventsSentTotalMD,
+			notificationEventsSkippedTotalMD,
+		},
+		loadClusterNotificationMetrics,
+	)
+
+	clusterIAMMG := NewMetricsGroup(clusterIAMCollectorPath,
+		[]MetricDescriptor{
+			lastSyncDurationMillisMD,
+			pluginAuthnServiceFailedRequestsMinuteMD,
+			pluginAuthnServiceLastFailSecondsMD,
+			pluginAuthnServiceLastSuccSecondsMD,
+			pluginAuthnServiceSuccAvgRttMsMinuteMD,
+			pluginAuthnServiceSuccMaxRttMsMinuteMD,
+			pluginAuthnServiceTotalRequestsMinuteMD,
+			sinceLastSyncMillisMD,
+			syncFailuresMD,
+			syncSuccessesMD,
+		},
+		loadClusterIAMMetrics,
+	)
+
+	clusterReplicationMG := NewMetricsGroup(replicationCollectorPath,
+		[]MetricDescriptor{
+			replicationAverageActiveWorkersMD,
+			replicationAverageQueuedBytesMD,
+			replicationAverageQueuedCountMD,
+			replicationAverageDataTransferRateMD,
+			replicationCurrentActiveWorkersMD,
+			replicationCurrentDataTransferRateMD,
+			replicationLastMinuteQueuedBytesMD,
+			replicationLastMinuteQueuedCountMD,
+			replicationMaxActiveWorkersMD,
+			replicationMaxQueuedBytesMD,
+			replicationMaxQueuedCountMD,
+			replicationMaxDataTransferRateMD,
+		},
+		loadClusterReplicationMetrics,
+	)
+
+	clusterConfigMG := NewMetricsGroup(clusterConfigCollectorPath,
+		[]MetricDescriptor{
+			configRRSParityMD,
+			configStandardParityMD,
+		},
+		loadClusterConfigMetrics,
+	)
+
+	scannerMG := NewMetricsGroup(scannerCollectorPath,
+		[]MetricDescriptor{
+			scannerBucketScansFinishedMD,
+			scannerBucketScansStartedMD,
+			scannerDirectoriesScannedMD,
+			scannerObjectsScannedMD,
+			scannerVersionsScannedMD,
+			scannerLastActivitySecondsMD,
+		},
+		loadClusterScannerMetrics,
+	)
+
+	loggerWebhookMG := NewMetricsGroup(loggerWebhookCollectorPath,
+		[]MetricDescriptor{
+			webhookFailedMessagesMD,
+			webhookQueueLengthMD,
+			webhookTotalMessagesMD,
+		},
+		loadLoggerWebhookMetrics,
+	)
+
+	auditMG := NewMetricsGroup(auditCollectorPath,
+		[]MetricDescriptor{
+			auditFailedMessagesMD,
+			auditTargetQueueLengthMD,
+			auditTotalMessagesMD,
+		},
+		loadAuditMetrics,
+	)
+
 	allMetricGroups := []*MetricsGroup{
 		apiRequestsMG,
-		apiBucketMG,
+		bucketAPIMG,
+		bucketReplicationMG,
 
 		systemNetworkInternodeMG,
 		systemDriveMG,
+		systemMemoryMG,
+		systemCPUMG,
+		systemProcessMG,
 
 		clusterHealthMG,
 		clusterUsageObjectsMG,
 		clusterUsageBucketsMG,
 		clusterErasureSetMG,
+		clusterNotificationMG,
+		clusterIAMMG,
+		clusterReplicationMG,
+		clusterConfigMG,
+
+		scannerMG,
+		auditMG,
+		loggerWebhookMG,
 	}
 
 	// Bucket metrics are special, they always include the bucket label. These
@@ -243,14 +434,11 @@ func newMetricGroups(r *prometheus.Registry) *metricsV3Collection {
 	}
 
 	// Prepare to register the collectors. Other than `MetricGroup` collectors,
-	// we also have standard collectors like `ProcessCollector` and `GoCollector`.
+	// we also have standard collectors like `GoCollector`.
 
 	// Create all Non-`MetricGroup` collectors here.
 	collectors := map[collectorPath]prometheus.Collector{
-		systemProcessCollectorPath: collectors.NewProcessCollector(collectors.ProcessCollectorOpts{
-			ReportErrors: true,
-		}),
-		systemGoCollectorPath: collectors.NewGoCollector(),
+		debugGoCollectorPath: collectors.NewGoCollector(),
 	}
 
 	// Add all `MetricGroup` collectors to the map.

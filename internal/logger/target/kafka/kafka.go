@@ -51,6 +51,7 @@ const (
 
 // Config - kafka target arguments.
 type Config struct {
+	Name    string      `json:"name"`
 	Enabled bool        `json:"enable"`
 	Brokers []xnet.Host `json:"brokers"`
 	Topic   string      `json:"topic"`

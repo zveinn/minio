@@ -61,10 +61,10 @@ func GetAuditEntry(ctx context.Context) *audit.Entry {
 
 // AuditLog - logs audit logs to all audit targets.
 func AuditLog(ctx context.Context, w http.ResponseWriter, r *http.Request, reqClaims map[string]interface{}, filterKeys ...string) {
-	auditTgts := AuditTargets()
-	if len(auditTgts) == 0 {
-		return
-	}
+	// auditTgts := []Target{}
+	// if len(auditTgts) == 0 {
+	// 	return
+	// }
 
 	var entry audit.Entry
 	if w != nil && r != nil {
@@ -141,10 +141,9 @@ func AuditLog(ctx context.Context, w http.ResponseWriter, r *http.Request, reqCl
 		}
 	}
 
-	// Send audit logs only to http targets.
-	for _, t := range auditTgts {
-		if err := t.Send(ctx, entry); err != nil {
-			LogOnceIf(ctx, "logging", fmt.Errorf("Unable to send an audit event to the target `%v`: %v", t, err), "send-audit-event-failure")
-		}
+	select {
+	case GlobalAuditLogger.Ch <- entry:
+	default:
+		LogOnceIf(ctx, "logging", fmt.Errorf("Unable place audit entry on global channel"), "send-audit-event-failure")
 	}
 }

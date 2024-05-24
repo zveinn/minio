@@ -667,17 +667,30 @@ func serverMain(ctx *cli.Context) {
 
 	setDefaultProfilerRates()
 
+	// Always load ENV variables from files first.
+	loadEnvVarsFromFiles()
+
+	bootstrapTrace("newAuditQueueSystem", func() {
+		loggerErr := logger.StartAuditLogQueue(GlobalContext)
+		fmt.Println("AUDIT LOGGER:", loggerErr)
+	})
+
+	bootstrapTrace("newLoggerQueueSystem", func() {
+		loggerErr := logger.StartSystemLogQueue(GlobalContext)
+		fmt.Println("SYSTEM LOGGER:", loggerErr)
+	})
+
 	// Initialize globalConsoleSys system
 	bootstrapTrace("newConsoleLogger", func() {
-		globalConsoleSys = NewConsoleLogger(GlobalContext)
-		logger.AddSystemTarget(GlobalContext, globalConsoleSys)
+		globalConsoleSys = logger.NewConsolePubSubTarget(
+			GlobalContext,
+			globalIsDistErasure,
+			globalLocalNodeName,
+		)
 
 		// Set node name, only set for distributed setup.
 		globalConsoleSys.SetNodeName(globalLocalNodeName)
 	})
-
-	// Always load ENV variables from files first.
-	loadEnvVarsFromFiles()
 
 	// Handle all server command args and build the disks layout
 	bootstrapTrace("serverHandleCmdArgs", func() {

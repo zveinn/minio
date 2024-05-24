@@ -65,6 +65,7 @@ import (
 	"github.com/minio/minio/internal/crypto"
 	"github.com/minio/minio/internal/hash"
 	"github.com/minio/minio/internal/logger"
+	"github.com/minio/minio/internal/logger/target/console"
 	"github.com/minio/mux"
 	"github.com/minio/pkg/v2/policy"
 )
@@ -109,7 +110,11 @@ func TestMain(m *testing.M) {
 	setMaxResources(nil)
 
 	// Initialize globalConsoleSys system
-	globalConsoleSys = NewConsoleLogger(context.Background())
+	globalConsoleSys = console.NewConsoleLogger(
+		context.Background(),
+		globalIsDistErasure,
+		globalLocalNodeName,
+	)
 
 	globalInternodeTransport = NewInternodeHTTPTransport(0)()
 

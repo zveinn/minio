@@ -15,45 +15,134 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-package console
+package logger
 
 import (
+	"container/ring"
+	"context"
 	"encoding/json"
 	"fmt"
 	"strconv"
 	"strings"
+	"sync"
 
+	"github.com/minio/madmin-go/v3"
 	"github.com/minio/minio/internal/color"
-	"github.com/minio/minio/internal/logger"
+	"github.com/minio/minio/internal/pubsub"
 	"github.com/minio/pkg/v2/console"
 	"github.com/minio/pkg/v2/logger/message/log"
+	xnet "github.com/minio/pkg/v2/net"
 )
 
-// Target implements loggerTarget to send log
-// in plain or json format to the standard output.
-type Target struct{}
+// number of log messages to buffer
+const defaultLogBufferCount = 10000
 
-// Validate - validate if the tty can be written to
-func (c *Target) Validate() error {
-	return nil
+// HTTPConsoleTarget holds global console logger state
+type HTTPConsoleTarget struct {
+	nodeName             string
+	isDistributedErasure bool
+	globalLocalNodeName  string
+
+	sync.RWMutex
+	pubsub *pubsub.PubSub[log.Info, madmin.LogMask]
+	logBuf *ring.Ring
 }
 
-// Endpoint returns the backend endpoint
-func (c *Target) Endpoint() string {
-	return ""
+// NewConsoleLogger - creates new HTTPConsoleLoggerSys with all nodes subscribed to
+// the console logging pub sub system
+func NewConsoleLogger(
+	ctx context.Context,
+	isDistributedErasure bool,
+	globalLocalNodeName string,
+) *HTTPConsoleTarget {
+	return &HTTPConsoleTarget{
+		pubsub: pubsub.New[log.Info, madmin.LogMask](8),
+		logBuf: ring.New(defaultLogBufferCount),
+	}
 }
 
-func (c *Target) String() string {
-	return "console"
+// SetNodeName - sets the node name if any after distributed setup has initialized
+func (sys *HTTPConsoleTarget) SetNodeName(nodeName string) {
+	if !sys.isDistributedErasure {
+		sys.nodeName = ""
+		return
+	}
+
+	host, err := xnet.ParseHost(sys.globalLocalNodeName)
+	if err != nil {
+		FatalIf(err, "Unable to start console logging subsystem")
+	}
+
+	sys.nodeName = host.Name
+}
+
+// Subscribe starts console logging for this node.
+func (sys *HTTPConsoleTarget) Subscribe(subCh chan log.Info, doneCh <-chan struct{}, node string, last int, logKind madmin.LogMask, filter func(entry log.Info) bool) error {
+	// Enable console logging for remote client.
+
+	cnt := 0
+	// by default send all console logs in the ring buffer unless node or limit query parameters
+	// are set.
+	var lastN []log.Info
+	if last > defaultLogBufferCount || last <= 0 {
+		last = defaultLogBufferCount
+	}
+
+	lastN = make([]log.Info, last)
+	sys.RLock()
+	sys.logBuf.Do(func(p interface{}) {
+		if p != nil {
+			lg, ok := p.(log.Info)
+			if ok && lg.SendLog(node, logKind) {
+				lastN[cnt%last] = lg
+				cnt++
+			}
+		}
+	})
+	sys.RUnlock()
+	// send last n console log messages in order filtered by node
+	if cnt > 0 {
+		for i := 0; i < last; i++ {
+			entry := lastN[(cnt+i)%last]
+			if (entry == log.Info{}) {
+				continue
+			}
+			select {
+			case subCh <- entry:
+			case <-doneCh:
+				return nil
+			}
+		}
+	}
+	return sys.pubsub.Subscribe(madmin.LogMaskAll, subCh, doneCh, filter)
+}
+
+// Send log message 'e' to console and publish to console
+// log pubsub system
+func (sys *HTTPConsoleTarget) Write(entry interface{}) error {
+	var lg log.Info
+	switch e := entry.(type) {
+	case log.Entry:
+		lg = log.Info{Entry: e, NodeName: sys.nodeName}
+	case string:
+		lg = log.Info{ConsoleMsg: e, NodeName: sys.nodeName}
+	}
+	sys.pubsub.Publish(lg)
+	sys.Lock()
+	sys.logBuf.Value = lg
+	sys.logBuf = sys.logBuf.Next()
+	sys.Unlock()
+	return sys.Send(entry)
 }
 
 // Send log message 'e' to console
-func (c *Target) Send(e interface{}) error {
+func (c *HTTPConsoleTarget) Send(e interface{}) error {
 	entry, ok := e.(log.Entry)
 	if !ok {
 		return fmt.Errorf("Uexpected log entry structure %#v", e)
 	}
-	if logger.IsJSON() {
+
+	if IsJSON() {
 		logJSON, err := json.Marshal(&entry)
 		if err != nil {
 			return err
@@ -62,7 +151,7 @@ func (c *Target) Send(e interface{}) error {
 		return nil
 	}
 
-	if entry.Level == logger.EventKind {
+	if entry.Level == EventKind {
 		fmt.Println(entry.Message)
 		return nil
 	}
@@ -110,7 +199,7 @@ func (c *Target) Send(e interface{}) error {
 	} else {
 		apiString = "INTERNAL"
 	}
-	timeString := "Time: " + entry.Time.Format(logger.TimeFormat)
+	timeString := "Time: " + entry.Time.Format(TimeFormat)
 
 	var deploymentID string
 	if entry.DeploymentID != "" {
@@ -143,16 +232,8 @@ func (c *Target) Send(e interface{}) error {
 
 	msg := color.RedBold(entry.Trace.Message)
 	output := fmt.Sprintf("\n%s\n%s%s%s%s%s%s\nError: %s%s\n%s",
-		apiString, timeString, deploymentID, requestID, remoteHost, host, userAgent,
-		msg, tagString, strings.Join(trace, "\n"))
+		apiString, timeString, deploymentID, requestID, remoteHost, host, userAgent, msg, tagString, strings.Join(trace, "\n"))
 
 	console.Println(output)
 	return nil
-}
-
-// New initializes a new logger target
-// which prints log directly in the standard
-// output.
-func New() *Target {
-	return &Target{}
 }

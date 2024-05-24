@@ -398,24 +398,14 @@ func logIf(ctx context.Context, subsystem string, err error, errKind ...interfac
 	if err == nil {
 		return
 	}
-	entry := errToEntry(ctx, subsystem, err, errKind...)
-	sendLog(ctx, entry)
+	sendLog(errToEntry(ctx, subsystem, err, errKind...))
 }
 
-func sendLog(ctx context.Context, entry log.Entry) {
-	systemTgts := SystemTargets()
-	if len(systemTgts) == 0 {
-		return
-	}
-
-	// Iterate over all logger targets to send the log entry
-	for _, t := range systemTgts {
-		if err := t.Send(ctx, entry); err != nil {
-			if consoleTgt != nil { // Sending to the console never fails
-				entry.Trace.Message = fmt.Sprintf("event(%#v) was not sent to Logger target (%#v): %#v", entry, t, err)
-				consoleTgt.Send(ctx, entry)
-			}
-		}
+func sendLog(entry log.Entry) {
+	select {
+	case GlobalSystemLogger.Ch <- entry:
+	default:
+		// LogOnceIf(ctx, "logging", fmt.Errorf("Unable place log entry on global channel"), "send-audit-event-failure")
 	}
 }
 
@@ -424,8 +414,7 @@ func Event(ctx context.Context, subsystem, msg string, args ...interface{}) {
 	if DisableErrorLog {
 		return
 	}
-	entry := logToEntry(ctx, subsystem, fmt.Sprintf(msg, args...), EventKind)
-	sendLog(ctx, entry)
+	sendLog(logToEntry(ctx, subsystem, fmt.Sprintf(msg, args...), EventKind))
 }
 
 // ErrCritical is the value panic'd whenever CriticalIf is called.

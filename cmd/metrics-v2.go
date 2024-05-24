@@ -3872,15 +3872,18 @@ func getWebhookMetrics() *MetricsGroupV2 {
 		cacheInterval: 10 * time.Second,
 	}
 	mg.RegisterRead(func(ctx context.Context) []MetricV2 {
-		tgts := append(logger.SystemTargets(), logger.AuditTargets()...)
+		tgts := append(
+			logger.GlobalSystemLogger.GetTargetStats(""),
+			logger.GlobalAuditLogger.GetTargetStats("")...,
+		)
 		metrics := make([]MetricV2, 0, len(tgts)*4)
 		for _, t := range tgts {
 			isOnline := 0
-			if t.IsOnline(ctx) {
+			if t.IsOnline() {
 				isOnline = 1
 			}
 			labels := map[string]string{
-				"name":     t.String(),
+				"name":     t.Name(),
 				"endpoint": t.Endpoint(),
 			}
 			metrics = append(metrics, MetricV2{

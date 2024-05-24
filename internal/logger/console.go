@@ -29,9 +29,6 @@ import (
 	"github.com/minio/pkg/v2/logger/message/log"
 )
 
-// ConsoleLoggerTgt is a stringified value to represent console logging
-const ConsoleLoggerTgt = "console+http"
-
 // ExitFunc is called by Fatal() class functions, by default it calls os.Exit()
 var ExitFunc = os.Exit
 

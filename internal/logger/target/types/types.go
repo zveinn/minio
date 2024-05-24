@@ -34,6 +34,8 @@ const (
 type TargetStats struct {
 	// QueueLength is the queue length if any messages are queued.
 	QueueLength int
+	// QLength int64
+	// QCap    int64
 
 	// TotalMessages is the total number of messages sent in the lifetime of the target
 	TotalMessages int64

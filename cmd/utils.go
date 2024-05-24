@@ -947,7 +947,7 @@ type AuditLogOptions struct {
 
 // sends audit logs for internal subsystem activity
 func auditLogInternal(ctx context.Context, opts AuditLogOptions) {
-	if len(logger.AuditTargets()) == 0 {
+	if logger.GlobalAuditLogger.TargetCount() == 0 {
 		return
 	}
 

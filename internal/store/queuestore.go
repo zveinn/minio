@@ -105,8 +105,8 @@ func (store *QueueStore[_]) Delete() error {
 	return os.Remove(store.directory)
 }
 
-// PutMultiple - puts an item to the store.
-func (store *QueueStore[I]) PutMultiple(item []I) error {
+// PutBatch - puts an item to the store.
+func (store *QueueStore[I]) PutBatch(item []I) error {
 	store.Lock()
 	defer store.Unlock()
 	if uint64(len(store.entries)) >= store.entryLimit {
@@ -117,11 +117,11 @@ func (store *QueueStore[I]) PutMultiple(item []I) error {
 	if err != nil {
 		return err
 	}
-	return store.multiWrite(key.String(), item)
+	return store.writeBatch(key.String(), item)
 }
 
-// multiWrite - writes an item to the directory.
-func (store *QueueStore[I]) multiWrite(key string, item []I) error {
+// writeBatch - writes multiple items to the directory.
+func (store *QueueStore[I]) writeBatch(key string, item []I) error {
 	buf := bytebufferpool.Get()
 	defer bytebufferpool.Put(buf)
 
@@ -133,16 +133,14 @@ func (store *QueueStore[I]) multiWrite(key string, item []I) error {
 			return err
 		}
 	}
-	b := buf.Bytes()
 
 	path := filepath.Join(store.directory, key+store.fileExt)
-	err := os.WriteFile(path, b, os.FileMode(0o770))
+	err := os.WriteFile(path, buf.Bytes(), os.FileMode(0o770))
 	buf.Reset()
 	if err != nil {
 		return err
 	}
 
-	// Increment the item count.
 	store.entries[key] = time.Now().UnixNano()
 
 	return nil

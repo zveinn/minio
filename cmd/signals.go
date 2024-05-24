@@ -31,8 +31,8 @@ import (
 func handleSignals() {
 	// Custom exit function
 	exit := func(success bool) {
-		if globalLoggerOutput != nil {
-			globalLoggerOutput.Close()
+		if logger.WriteCloser != nil {
+			logger.WriteCloser.Close()
 		}
 
 		// If global profiler is set stop before we exit.

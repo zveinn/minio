@@ -704,8 +704,6 @@ func getServerListenAddrs() []string {
 	return addrs.ToSlice()
 }
 
-var globalLoggerOutput io.WriteCloser
-
 func initializeLogRotate(ctx *cli.Context) (io.WriteCloser, error) {
 	lgDir := ctx.String("log-dir")
 	if lgDir == "" {
@@ -763,22 +761,26 @@ func serverMain(ctx *cli.Context) {
 	// Initialize globalConsoleSys system
 	bootstrapTrace("newConsoleLogger", func() {
 		output, err := initializeLogRotate(ctx)
-		if err == nil {
-			logger.Output = output
-			globalConsoleSys = NewConsoleLogger(GlobalContext, output)
-			globalLoggerOutput = output
-		} else {
-			logger.Output = os.Stderr
-			globalConsoleSys = NewConsoleLogger(GlobalContext, os.Stderr)
+		if err != nil {
+			output = os.Stderr
 		}
-		logger.AddSystemTarget(GlobalContext, globalConsoleSys)
 
-		// Set node name, only set for distributed setup.
-		globalConsoleSys.SetNodeName(globalLocalNodeName)
+		logger.Writer = output
+		logger.WriteCloser = output
 		if err != nil {
 			// We can only log here since we need globalConsoleSys initialized
 			logger.Fatal(err, "invalid --logrorate-dir option")
 		}
+
+		globalConsoleSys = logger.NewConsoleHTTPTarget(
+			GlobalContext,
+			globalIsDistErasure,
+			globalLocalNodeName,
+			output,
+		)
+
+		// Set node name, only set for distributed setup.
+		globalConsoleSys.SetNodeName(globalLocalNodeName)
 	})
 
 	// Handle all server command args and build the disks layout

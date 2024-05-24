@@ -28,7 +28,7 @@ type Config struct {
 	Transport  http.RoundTripper `json:"-"`
 
 	// Custom logger
-	LogOnceIf func(ctx context.Context, err error, id string, errKind ...interface{}) `json:"-"`
+	// LogOnceIf func(ctx context.Context, err error, id string, errKind ...interface{}) `json:"-"`
 }
 
 type HTTPTrgt struct {

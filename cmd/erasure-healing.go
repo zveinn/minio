@@ -213,7 +213,7 @@ func (fi FileInfo) DataMov() bool {
 }
 
 func (er *erasureObjects) auditHealObject(ctx context.Context, bucket, object, versionID string, result madmin.HealResultItem, err error) {
-	if len(logger.AuditTargets()) == 0 {
+	if logger.GlobalAuditLogger.TargetCount() == 0 {
 		return
 	}
 

@@ -52,11 +52,13 @@ const (
 	InfoKind    = madmin.LogKindInfo
 )
 
+// DisableErrorLog avoids printing error/event/info kind of logs
+var DisableErrorLog = false
+
+// Writer allows configuring custom writer, defaults to os.Stderr
 var (
-	// DisableErrorLog avoids printing error/event/info kind of logs
-	DisableErrorLog = false
-	// Output allows configuring custom writer, defaults to os.Stderr
-	Output io.Writer = os.Stderr
+	Writer      io.Writer      = os.Stderr
+	WriteCloser io.WriteCloser = os.Stderr
 )
 
 var trimStrings []string
@@ -383,21 +385,6 @@ func buildLogEntry(ctx context.Context, subsystem, message string, trace []strin
 	return entry
 }
 
-// consoleLogIf prints a detailed error message during
-// the execution of the server.
-func consoleLogIf(ctx context.Context, subsystem string, err error, errKind ...interface{}) {
-	if DisableErrorLog {
-		return
-	}
-	if err == nil {
-		return
-	}
-	if consoleTgt != nil {
-		entry := errToEntry(ctx, subsystem, err, errKind...)
-		consoleTgt.Send(ctx, entry)
-	}
-}
-
 // logIf prints a detailed error message during
 // the execution of the server.
 func logIf(ctx context.Context, subsystem string, err error, errKind ...interface{}) {
@@ -414,7 +401,8 @@ func sendLog(entry log.Entry) {
 	select {
 	case GlobalSystemLogger.Ch <- entry:
 	default:
-		// LogOnceIf(ctx, "logging", fmt.Errorf("Unable place log entry on global channel"), "send-audit-event-failure")
+		fmt.Println("ERRRRRRRR")
+		// LogOnceIf(context.Background(), "logging", fmt.Errorf("Unable place log entry on global channel"), "send-audit-event-failure")
 	}
 }
 

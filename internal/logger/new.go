@@ -15,6 +15,7 @@ import (
 	jsoniter "github.com/json-iterator/go"
 	"github.com/minio/minio/internal/logger/target/http"
 	"github.com/minio/minio/internal/logger/target/kafka"
+	"github.com/minio/minio/internal/logger/target/testlogger"
 	"github.com/minio/minio/internal/logger/target/types"
 	"github.com/valyala/bytebufferpool"
 )
@@ -36,9 +37,24 @@ var (
 	TargetQueueSize               = 10000
 	GlobalAuditLogger             *GlobalBatchQueue
 	GlobalSystemLogger            *GlobalBatchQueue
+	GlobalTestLogger              *GlobalBatchQueue
 )
 
+type GlobalBatchQueueConfig struct {
+	Name                          string
+	EnableBatchManager            bool
+	BatchManagerDir               string
+	BacthManagerChannelSize       int
+	BatchmanagerUpdateChannelSize int
+
+	ChannelSize       int
+	BatchSize         int
+	TargetChannelSize int
+	// MaxWorkers      int
+}
+
 type GlobalBatchQueue struct {
+	Name string
 	// This channel receives interfaces and
 	// distributes them to all Targets
 	Ch chan interface{}
@@ -62,8 +78,15 @@ func (g *GlobalBatchQueue) TargetCount() int {
 }
 
 func StartSystemLogQueue(ctx context.Context) (err error) {
-	// TODO .. apply configurations
-	GlobalSystemLogger, err = newGlobalQueue()
+	c := &GlobalBatchQueueConfig{
+		Name:               "system",
+		EnableBatchManager: false,
+		ChannelSize:        1000000,
+		BatchSize:          1000,
+		TargetChannelSize:  1000,
+	}
+
+	GlobalSystemLogger, err = newGlobalQueue(c)
 	if err != nil {
 		return err
 	}
@@ -73,8 +96,15 @@ func StartSystemLogQueue(ctx context.Context) (err error) {
 }
 
 func StartAuditLogQueue(ctx context.Context) (err error) {
-	// TODO .. apply configurations
-	GlobalAuditLogger, err = newGlobalQueue()
+	c := &GlobalBatchQueueConfig{
+		Name:               "audit",
+		EnableBatchManager: false,
+		ChannelSize:        1000000,
+		BatchSize:          1000,
+		TargetChannelSize:  1000,
+	}
+
+	GlobalAuditLogger, err = newGlobalQueue(c)
 	if err != nil {
 		return err
 	}
@@ -83,15 +113,59 @@ func StartAuditLogQueue(ctx context.Context) (err error) {
 	return nil
 }
 
-func newGlobalQueue() (GQ *GlobalBatchQueue, err error) {
+func StartTestLogQueue(ctx context.Context) (err error) {
+	c := &GlobalBatchQueueConfig{
+		EnableBatchManager: false,
+		ChannelSize:        1000000,
+		BatchSize:          1000,
+		TargetChannelSize:  1000,
+	}
+
+	GlobalTestLogger, err = newGlobalQueue(c)
+	if err != nil {
+		return err
+	}
+
+	go GlobalTestLogger.Init(ctx)
+
+	T := newQueueTarget(
+		"",
+		1,
+		"test",
+		"test",
+		types.TargetConsole,
+		nil,
+		testlogger.T,
+		nil,
+	)
+
+	T.Start = func(ctx context.Context) {
+		go T.launchFanOutWorker(ctx, true)
+	}
+
+	currentTarget := GlobalTestLogger.FindTarget("test")
+	if currentTarget != nil {
+		currentTarget.UpdateTarget(T)
+		return
+	}
+
+	GlobalTestLogger.NewTarget(ctx, T)
+
+	return nil
+}
+
+func newGlobalQueue(c *GlobalBatchQueueConfig) (GQ *GlobalBatchQueue, err error) {
 	GQ = new(GlobalBatchQueue)
-	GQ.Ch = make(chan interface{}, globalQueueSize)
+	GQ.Name = c.Name
+	GQ.Ch = make(chan interface{}, c.ChannelSize)
 	GQ.Targets = make([]*QueueTarget, 0)
+
+	GQ.BatchManagerEnabled = c.EnableBatchManager
 	if GQ.BatchManagerEnabled {
 		GQ.BatchManager = newBatchManager(
-			BatchManagerBatchChannelSize,
-			BatchManagerStatusChannelSize,
-			GQ.BatchManagerDir,
+			c.BacthManagerChannelSize,
+			c.BatchmanagerUpdateChannelSize,
+			c.BatchManagerDir,
 		)
 	}
 
@@ -125,19 +199,21 @@ func (g *GlobalBatchQueue) Init(ctx context.Context) {
 
 		select {
 		case _ = <-dumpTicker.C:
-			fmt.Println("dumpTicker")
-			if len(batch.entries) == 0 {
+			fmt.Println(g.Name, ">", "DUMP: ", batchIndex)
+			if batchIndex == 0 {
 				continue
 			}
+			batchIndex = 0
 		case batch.entries[batchIndex], ok = <-g.Ch:
 			if !ok {
 				return
 			}
 
 			batchIndex++
-			if batchIndex < len(batch.entries) {
+			if batchIndex < globlQueueBatchSize {
 				continue
 			}
+			fmt.Println(g.Name, ">", "BATCH:", batchIndex, len(g.Ch), cap(g.Ch))
 			batchIndex = 0
 		default:
 			time.Sleep(100 * time.Microsecond)
@@ -149,6 +225,7 @@ func (g *GlobalBatchQueue) Init(ctx context.Context) {
 		}
 
 		for i := range g.Targets {
+			fmt.Println(g.Name, ">", "TO TARGET:", g.Targets[i].name)
 			select {
 			// TODO.. make sure we are not sending pointer to the variable
 			// but a pointer to the underlying batch struct. And make sure
@@ -162,8 +239,8 @@ func (g *GlobalBatchQueue) Init(ctx context.Context) {
 
 		batch = newBatch(globlQueueBatchSize)
 
-		if sentToTargets == 1 {
-			fmt.Println("SENT TO NONE")
+		if sentToTargets == 0 {
+			fmt.Println(g.Name, ">", "NONE")
 			// LOG TO CONSOLE...
 			// maybe add some stats about how many messages
 			// have been moved to console
@@ -868,15 +945,17 @@ func NewHTTPTarget(
 	return
 }
 
-func NewConsolePubSubTarget(
+func NewConsoleHTTPTarget(
 	ctx context.Context,
 	isGlobalDistErasure bool,
 	globalLocalNodeName string,
+	writer io.Writer,
 ) (L *HTTPConsoleTarget) {
 	L = NewConsoleLogger(
 		ctx,
 		isGlobalDistErasure,
 		globalLocalNodeName,
+		writer,
 	)
 
 	T := newQueueTarget(

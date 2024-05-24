@@ -22,6 +22,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"strconv"
 	"strings"
 	"sync"
@@ -29,7 +30,6 @@ import (
 	"github.com/minio/madmin-go/v3"
 	"github.com/minio/minio/internal/color"
 	"github.com/minio/minio/internal/pubsub"
-	"github.com/minio/pkg/v2/console"
 	"github.com/minio/pkg/v2/logger/message/log"
 	xnet "github.com/minio/pkg/v2/net"
 )
@@ -46,6 +46,7 @@ type HTTPConsoleTarget struct {
 	sync.RWMutex
 	pubsub *pubsub.PubSub[log.Info, madmin.LogMask]
 	logBuf *ring.Ring
+	Writer io.Writer
 }
 
 // NewConsoleLogger - creates new HTTPConsoleLoggerSys with all nodes subscribed to
@@ -54,10 +55,12 @@ func NewConsoleLogger(
 	ctx context.Context,
 	isDistributedErasure bool,
 	globalLocalNodeName string,
+	writer io.Writer,
 ) *HTTPConsoleTarget {
 	return &HTTPConsoleTarget{
 		pubsub: pubsub.New[log.Info, madmin.LogMask](8),
 		logBuf: ring.New(defaultLogBufferCount),
+		Writer: writer,
 	}
 }
 
@@ -147,12 +150,13 @@ func (c *HTTPConsoleTarget) Send(e interface{}) error {
 		if err != nil {
 			return err
 		}
-		fmt.Println(string(logJSON))
+		// fmt.Println(string(logJSON))
+		fmt.Fprintln(c.Writer, string(logJSON))
 		return nil
 	}
 
 	if entry.Level == EventKind {
-		fmt.Println(entry.Message)
+		fmt.Fprintln(c.Writer, entry.Message)
 		return nil
 	}
 
@@ -234,6 +238,6 @@ func (c *HTTPConsoleTarget) Send(e interface{}) error {
 	output := fmt.Sprintf("\n%s\n%s%s%s%s%s%s\nError: %s%s\n%s",
 		apiString, timeString, deploymentID, requestID, remoteHost, host, userAgent, msg, tagString, strings.Join(trace, "\n"))
 
-	console.Println(output)
+	fmt.Fprintln(c.Writer, output)
 	return nil
 }

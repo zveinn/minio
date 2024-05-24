@@ -47,9 +47,12 @@ var (
 // loadLoggerWebhookMetrics - `MetricsLoaderFn` for logger webhook
 // such as failed messages and total messages.
 func loadLoggerWebhookMetrics(ctx context.Context, m MetricValues, c *metricsCache) error {
-	tgts := append(logger.SystemTargets(), logger.AuditTargets()...)
+	tgts := append(
+		logger.GlobalSystemLogger.GetTargetStats(""),
+		logger.GlobalAuditLogger.GetTargetStats("")...,
+	)
 	for _, t := range tgts {
-		labels := []string{nameL, t.String(), endpointL, t.Endpoint()}
+		labels := []string{nameL, t.Name(), endpointL, t.Endpoint()}
 		m.Set(webhookFailedMessages, float64(t.Stats().FailedMessages), labels...)
 		m.Set(webhookQueueLength, float64(t.Stats().QueueLength), labels...)
 		m.Set(webhookTotalMessages, float64(t.Stats().TotalMessages), labels...)

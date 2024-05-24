@@ -2,6 +2,8 @@ package kafka
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"time"
 
@@ -9,6 +11,44 @@ import (
 	saramatls "github.com/IBM/sarama/tools/tls"
 	xnet "github.com/minio/pkg/v2/net"
 )
+
+// the suffix for the configured queue dir where the logs will be persisted.
+const kafkaLoggerExtension = ".kafka.log"
+
+const (
+	statusClosed = iota
+	statusOffline
+	statusOnline
+)
+
+// Config - kafka target arguments.
+type Config struct {
+	Name    string      `json:"name"`
+	Enabled bool        `json:"enable"`
+	Brokers []xnet.Host `json:"brokers"`
+	Topic   string      `json:"topic"`
+	Version string      `json:"version"`
+	TLS     struct {
+		Enable        bool               `json:"enable"`
+		RootCAs       *x509.CertPool     `json:"-"`
+		SkipVerify    bool               `json:"skipVerify"`
+		ClientAuth    tls.ClientAuthType `json:"clientAuth"`
+		ClientTLSCert string             `json:"clientTLSCert"`
+		ClientTLSKey  string             `json:"clientTLSKey"`
+	} `json:"tls"`
+	SASL struct {
+		Enable    bool   `json:"enable"`
+		User      string `json:"username"`
+		Password  string `json:"password"`
+		Mechanism string `json:"mechanism"`
+	} `json:"sasl"`
+	// Queue store
+	QueueSize int    `json:"queueSize"`
+	QueueDir  string `json:"queueDir"`
+
+	// Custom logger
+	LogOnce func(ctx context.Context, err error, id string, errKind ...interface{}) `json:"-"`
+}
 
 type KafkaTrgt struct {
 	kconfig Config

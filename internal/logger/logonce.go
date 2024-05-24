@@ -38,33 +38,6 @@ type logOnceType struct {
 	sync.Mutex
 }
 
-func (l *logOnceType) logOnceConsoleIf(ctx context.Context, subsystem string, err error, id string, errKind ...interface{}) {
-	if err == nil {
-		return
-	}
-
-	nerr := unwrapErrs(err)
-	l.Lock()
-	shouldLog := true
-	prev, ok := l.IDMap[id]
-	if !ok {
-		l.IDMap[id] = onceErr{
-			Err:   nerr,
-			Count: 1,
-		}
-	} else if prev.Err.Error() == nerr.Error() {
-		// if errors are equal do not log.
-		prev.Count++
-		l.IDMap[id] = prev
-		shouldLog = false
-	}
-	l.Unlock()
-
-	if shouldLog {
-		consoleLogIf(ctx, subsystem, err, errKind...)
-	}
-}
-
 const unwrapErrsDepth = 3
 
 // unwrapErrs upto the point where errors.Unwrap(err) returns nil
@@ -147,12 +120,4 @@ func LogOnceIf(ctx context.Context, subsystem string, err error, id string, errK
 		return
 	}
 	logOnce.logOnceIf(ctx, subsystem, err, id, errKind...)
-}
-
-// LogOnceConsoleIf - similar to LogOnceIf but exclusively only logs to console target.
-func LogOnceConsoleIf(ctx context.Context, subsystem string, err error, id string, errKind ...interface{}) {
-	if logIgnoreError(err) {
-		return
-	}
-	logOnce.logOnceConsoleIf(ctx, subsystem, err, id, errKind...)
 }

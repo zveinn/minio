@@ -19,21 +19,39 @@ package cmd
 
 import (
 	"context"
+	"encoding/binary"
 	"errors"
 	"hash/crc32"
 
 	"github.com/minio/pkg/v2/sync/errgroup"
 )
 
+// counterMap type adds GetValueWithQuorum method to a map[T]int used to count occurrences of values of type T.
+type counterMap[T comparable] map[T]int
+
+// GetValueWithQuorum returns the first key which occurs >= quorum number of times.
+func (c counterMap[T]) GetValueWithQuorum(quorum int) (T, bool) {
+	var zero T
+	for x, count := range c {
+		if count >= quorum {
+			return x, true
+		}
+	}
+	return zero, false
+}
+
 // figure out the most commonVersions across disk that satisfies
-// the 'writeQuorum' this function returns '0' if quorum cannot
+// the 'writeQuorum' this function returns "" if quorum cannot
 // be achieved and disks have too many inconsistent versions.
-func reduceCommonVersions(diskVersions []uint64, writeQuorum int) (commonVersions uint64) {
+func reduceCommonVersions(diskVersions [][]byte, writeQuorum int) (versions []byte) {
 	diskVersionsCount := make(map[uint64]int)
 	for _, versions := range diskVersions {
-		diskVersionsCount[versions]++
+		if len(versions) > 0 {
+			diskVersionsCount[binary.BigEndian.Uint64(versions)]++
+		}
 	}
 
+	var commonVersions uint64
 	max := 0
 	for versions, count := range diskVersionsCount {
 		if max < count {
@@ -43,10 +61,38 @@ func reduceCommonVersions(diskVersions []uint64, writeQuorum int) (commonVersion
 	}
 
 	if max >= writeQuorum {
-		return commonVersions
+		for _, versions := range diskVersions {
+			if binary.BigEndian.Uint64(versions) == commonVersions {
+				return versions
+			}
+		}
 	}
 
-	return 0
+	return []byte{}
+}
+
+// figure out the most commonVersions across disk that satisfies
+// the 'writeQuorum' this function returns '0' if quorum cannot
+// be achieved and disks have too many inconsistent versions.
+func reduceCommonDataDir(dataDirs []string, writeQuorum int) (dataDir string) {
+	dataDirsCount := make(map[string]int)
+	for _, ddir := range dataDirs {
+		dataDirsCount[ddir]++
+	}
+
+	max := 0
+	for ddir, count := range dataDirsCount {
+		if max < count {
+			max = count
+			dataDir = ddir
+		}
+	}
+
+	if max >= writeQuorum {
+		return dataDir
+	}
+
+	return ""
 }
 
 // Returns number of errors that occurred the most (incl. nil) and the

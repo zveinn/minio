@@ -18,6 +18,7 @@
 package cmd
 
 import (
+	"bytes"
 	"context"
 	"encoding/hex"
 	"errors"
@@ -28,12 +29,14 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"syscall"
 	"time"
 
 	"github.com/coreos/go-systemd/v22/daemon"
+	"github.com/dustin/go-humanize"
 	"github.com/minio/cli"
 	"github.com/minio/madmin-go/v3"
 	"github.com/minio/minio-go/v7"
@@ -101,32 +104,6 @@ var ServerFlags = []cli.Flag{
 		Hidden: true,
 	},
 	cli.DurationFlag{
-		Name:   "conn-client-read-deadline",
-		Usage:  "custom connection READ deadline for incoming requests",
-		Hidden: true,
-		EnvVar: "MINIO_CONN_CLIENT_READ_DEADLINE",
-	},
-	cli.DurationFlag{
-		Name:   "conn-client-write-deadline",
-		Usage:  "custom connection WRITE deadline for outgoing requests",
-		Hidden: true,
-		EnvVar: "MINIO_CONN_CLIENT_WRITE_DEADLINE",
-	},
-	cli.DurationFlag{
-		Name:   "conn-read-deadline",
-		Usage:  "custom connection READ deadline",
-		Hidden: true,
-		Value:  10 * time.Minute,
-		EnvVar: "MINIO_CONN_READ_DEADLINE",
-	},
-	cli.DurationFlag{
-		Name:   "conn-write-deadline",
-		Usage:  "custom connection WRITE deadline",
-		Hidden: true,
-		Value:  10 * time.Minute,
-		EnvVar: "MINIO_CONN_WRITE_DEADLINE",
-	},
-	cli.DurationFlag{
 		Name:   "conn-user-timeout",
 		Usage:  "custom TCP_USER_TIMEOUT for socket buffers",
 		Hidden: true,
@@ -178,20 +155,43 @@ var ServerFlags = []cli.Flag{
 		Hidden: true,
 		EnvVar: "MINIO_MEMLIMIT",
 	},
-}
-
-var gatewayCmd = cli.Command{
-	Name:            "gateway",
-	Usage:           "start object storage gateway",
-	Hidden:          true,
-	Flags:           append(ServerFlags, GlobalFlags...),
-	HideHelpCommand: true,
-	Action:          gatewayMain,
-}
-
-func gatewayMain(ctx *cli.Context) error {
-	logger.Fatal(errInvalidArgument, "Gateway is deprecated, To continue to use Gateway please use releases no later than 'RELEASE.2022-10-24T18-35-07Z'. We recommend all our users to migrate from gateway mode to server mode. Please read https://blog.min.io/deprecation-of-the-minio-gateway/")
-	return nil
+	cli.IntFlag{
+		Name:   "send-buf-size",
+		Value:  4 * humanize.MiByte,
+		EnvVar: "MINIO_SEND_BUF_SIZE",
+		Hidden: true,
+	},
+	cli.IntFlag{
+		Name:   "recv-buf-size",
+		Value:  4 * humanize.MiByte,
+		EnvVar: "MINIO_RECV_BUF_SIZE",
+		Hidden: true,
+	},
+	cli.StringFlag{
+		Name:   "log-dir",
+		Usage:  "specify the directory to save the server log",
+		EnvVar: "MINIO_LOG_DIR",
+		Hidden: true,
+	},
+	cli.IntFlag{
+		Name:   "log-size",
+		Usage:  "specify the maximum server log file size in bytes before its rotated",
+		Value:  10 * humanize.MiByte,
+		EnvVar: "MINIO_LOG_SIZE",
+		Hidden: true,
+	},
+	cli.BoolFlag{
+		Name:   "log-compress",
+		Usage:  "specify if we want the rotated logs to be gzip compressed or not",
+		EnvVar: "MINIO_LOG_COMPRESS",
+		Hidden: true,
+	},
+	cli.StringFlag{
+		Name:   "log-prefix",
+		Usage:  "specify the log prefix name for the server log",
+		EnvVar: "MINIO_LOG_PREFIX",
+		Hidden: true,
+	},
 }
 
 var serverCmd = cli.Command{
@@ -268,23 +268,7 @@ func serverCmdArgs(ctx *cli.Context) []string {
 	return strings.Fields(v)
 }
 
-func mergeServerCtxtFromConfigFile(configFile string, ctxt *serverCtxt) error {
-	rd, err := Open(configFile)
-	if err != nil {
-		return err
-	}
-	defer rd.Close()
-
-	cf := &config.ServerConfig{}
-	dec := yaml.NewDecoder(rd)
-	dec.SetStrict(true)
-	if err = dec.Decode(cf); err != nil {
-		return err
-	}
-	if cf.Version != "v1" {
-		return fmt.Errorf("unexpected version: %s", cf.Version)
-	}
-
+func configCommonToSrvCtx(cf config.ServerConfigCommon, ctxt *serverCtxt) {
 	ctxt.RootUser = cf.RootUser
 	ctxt.RootPwd = cf.RootPwd
 
@@ -312,8 +296,75 @@ func mergeServerCtxtFromConfigFile(configFile string, ctxt *serverCtxt) error {
 	if cf.Options.SFTP.SSHPrivateKey != "" {
 		ctxt.SFTP = append(ctxt.SFTP, fmt.Sprintf("ssh-private-key=%s", cf.Options.SFTP.SSHPrivateKey))
 	}
+}
 
-	ctxt.Layout, err = buildDisksLayoutFromConfFile(cf.Pools)
+func mergeServerCtxtFromConfigFile(configFile string, ctxt *serverCtxt) error {
+	rd, err := xioutil.ReadFile(configFile)
+	if err != nil {
+		return err
+	}
+
+	cfReader := bytes.NewReader(rd)
+
+	cv := config.ServerConfigVersion{}
+	if err = yaml.Unmarshal(rd, &cv); err != nil {
+		return err
+	}
+
+	switch cv.Version {
+	case "v1", "v2":
+	default:
+		return fmt.Errorf("unexpected version: %s", cv.Version)
+	}
+
+	cfCommon := config.ServerConfigCommon{}
+	if err = yaml.Unmarshal(rd, &cfCommon); err != nil {
+		return err
+	}
+
+	configCommonToSrvCtx(cfCommon, ctxt)
+
+	v, err := env.GetInt(EnvErasureSetDriveCount, 0)
+	if err != nil {
+		return err
+	}
+	setDriveCount := uint64(v)
+
+	var pools []poolArgs
+	switch cv.Version {
+	case "v1":
+		cfV1 := config.ServerConfigV1{}
+		if err = yaml.Unmarshal(rd, &cfV1); err != nil {
+			return err
+		}
+
+		pools = make([]poolArgs, 0, len(cfV1.Pools))
+		for _, list := range cfV1.Pools {
+			pools = append(pools, poolArgs{
+				args:          list,
+				setDriveCount: setDriveCount,
+			})
+		}
+	case "v2":
+		cf := config.ServerConfig{}
+		cfReader.Seek(0, io.SeekStart)
+		if err = yaml.Unmarshal(rd, &cf); err != nil {
+			return err
+		}
+
+		pools = make([]poolArgs, 0, len(cf.Pools))
+		for _, list := range cf.Pools {
+			driveCount := list.SetDriveCount
+			if setDriveCount > 0 {
+				driveCount = setDriveCount
+			}
+			pools = append(pools, poolArgs{
+				args:          list.Args,
+				setDriveCount: driveCount,
+			})
+		}
+	}
+	ctxt.Layout, err = buildDisksLayoutFromConfFile(pools)
 	return err
 }
 
@@ -362,15 +413,21 @@ func serverHandleCmdArgs(ctxt serverCtxt) {
 	// Initialize, see which NIC the service is running on, and save it as global value
 	setGlobalInternodeInterface(ctxt.Interface)
 
+	globalTCPOptions = xhttp.TCPOptions{
+		UserTimeout:    int(ctxt.UserTimeout.Milliseconds()),
+		DriveOPTimeout: globalDriveConfig.GetOPTimeout,
+		Interface:      ctxt.Interface,
+		SendBufSize:    ctxt.SendBufSize,
+		RecvBufSize:    ctxt.RecvBufSize,
+	}
+
 	// allow transport to be HTTP/1.1 for proxying.
-	globalProxyTransport = NewCustomHTTPProxyTransport()()
 	globalProxyEndpoints = GetProxyEndpoints(globalEndpoints)
 	globalInternodeTransport = NewInternodeHTTPTransport(ctxt.MaxIdleConnsPerHost)()
 	globalRemoteTargetTransport = NewRemoteTargetHTTPTransport(false)()
-	globalHealthChkTransport = NewHTTPTransport()
 	globalForwarder = handlers.NewForwarder(&handlers.Forwarder{
 		PassHost:     true,
-		RoundTripper: NewHTTPTransportWithTimeout(1 * time.Hour),
+		RoundTripper: globalRemoteTargetTransport,
 		Logger: func(err error) {
 			if err != nil && !errors.Is(err, context.Canceled) {
 				replLogIf(GlobalContext, err)
@@ -378,21 +435,11 @@ func serverHandleCmdArgs(ctxt serverCtxt) {
 		},
 	})
 
-	globalTCPOptions = xhttp.TCPOptions{
-		UserTimeout:        int(ctxt.UserTimeout.Milliseconds()),
-		ClientReadTimeout:  ctxt.ConnClientReadDeadline,
-		ClientWriteTimeout: ctxt.ConnClientWriteDeadline,
-		Interface:          ctxt.Interface,
-	}
-
 	// On macOS, if a process already listens on LOCALIPADDR:PORT, net.Listen() falls back
 	// to IPv6 address ie minio will start listening on IPv6 address whereas another
 	// (non-)minio process is listening on IPv4 of given port.
 	// To avoid this error situation we check for port availability.
 	logger.FatalIf(xhttp.CheckPortAvailability(globalMinioHost, globalMinioPort, globalTCPOptions), "Unable to start the server")
-
-	globalConnReadDeadline = ctxt.ConnReadDeadline
-	globalConnWriteDeadline = ctxt.ConnWriteDeadline
 }
 
 func initAllSubsystems(ctx context.Context) {
@@ -657,6 +704,39 @@ func getServerListenAddrs() []string {
 	return addrs.ToSlice()
 }
 
+var globalLoggerOutput io.WriteCloser
+
+func initializeLogRotate(ctx *cli.Context) (io.WriteCloser, error) {
+	lgDir := ctx.String("log-dir")
+	if lgDir == "" {
+		return os.Stderr, nil
+	}
+	lgDirAbs, err := filepath.Abs(lgDir)
+	if err != nil {
+		return nil, err
+	}
+	lgSize := ctx.Int("log-size")
+
+	var fileNameFunc func() string
+	if ctx.IsSet("log-prefix") {
+		fileNameFunc = func() string {
+			return fmt.Sprintf("%s-%s.log", ctx.String("log-prefix"), fmt.Sprintf("%X", time.Now().UTC().UnixNano()))
+		}
+	}
+
+	output, err := logger.NewDir(logger.Options{
+		Directory:       lgDirAbs,
+		MaximumFileSize: int64(lgSize),
+		Compress:        ctx.Bool("log-compress"),
+		FileNameFunc:    fileNameFunc,
+	})
+	if err != nil {
+		return nil, err
+	}
+	logger.EnableJSON()
+	return output, nil
+}
+
 // serverMain handler called for 'minio server' command.
 func serverMain(ctx *cli.Context) {
 	var warnings []string
@@ -682,14 +762,23 @@ func serverMain(ctx *cli.Context) {
 
 	// Initialize globalConsoleSys system
 	bootstrapTrace("newConsoleLogger", func() {
-		globalConsoleSys = logger.NewConsolePubSubTarget(
-			GlobalContext,
-			globalIsDistErasure,
-			globalLocalNodeName,
-		)
+		output, err := initializeLogRotate(ctx)
+		if err == nil {
+			logger.Output = output
+			globalConsoleSys = NewConsoleLogger(GlobalContext, output)
+			globalLoggerOutput = output
+		} else {
+			logger.Output = os.Stderr
+			globalConsoleSys = NewConsoleLogger(GlobalContext, os.Stderr)
+		}
+		logger.AddSystemTarget(GlobalContext, globalConsoleSys)
 
 		// Set node name, only set for distributed setup.
 		globalConsoleSys.SetNodeName(globalLocalNodeName)
+		if err != nil {
+			// We can only log here since we need globalConsoleSys initialized
+			logger.Fatal(err, "invalid --logrorate-dir option")
+		}
 	})
 
 	// Handle all server command args and build the disks layout
@@ -738,6 +827,11 @@ func serverMain(ctx *cli.Context) {
 		}
 	}
 
+	var getCert certs.GetCertificateFunc
+	if globalTLSCerts != nil {
+		getCert = globalTLSCerts.GetCertificate
+	}
+
 	// Check for updates in non-blocking manner.
 	go func() {
 		if !globalServerCtxt.Quiet && !globalInplaceUpdateDisabled {
@@ -764,12 +858,7 @@ func serverMain(ctx *cli.Context) {
 		warnings = append(warnings, color.YellowBold("- Detected GOMAXPROCS(%d) < NumCPU(%d), please make sure to provide all PROCS to MinIO for optimal performance", maxProcs, cpuProcs))
 	}
 
-	var getCert certs.GetCertificateFunc
-	if globalTLSCerts != nil {
-		getCert = globalTLSCerts.GetCertificate
-	}
-
-	// Initialize gridn
+	// Initialize grid
 	bootstrapTrace("initGrid", func() {
 		logger.FatalIf(initGlobalGrid(GlobalContext, globalEndpoints), "Unable to configure server grid RPC services")
 	})
@@ -830,9 +919,6 @@ func serverMain(ctx *cli.Context) {
 			logFatalErrs(err, Endpoint{}, true)
 		}
 	})
-
-	xhttp.SetDeploymentID(globalDeploymentID())
-	xhttp.SetMinIOVersion(Version)
 
 	for _, n := range globalNodes {
 		nodeName := n.Host
@@ -1029,7 +1115,7 @@ func serverMain(ctx *cli.Context) {
 		}
 	}()
 
-	region := globalSite.Region
+	region := globalSite.Region()
 	if region == "" {
 		region = "us-east-1"
 	}
@@ -1037,7 +1123,7 @@ func serverMain(ctx *cli.Context) {
 		globalMinioClient, err = minio.New(globalLocalNodeName, &minio.Options{
 			Creds:     credentials.NewStaticV4(globalActiveCred.AccessKey, globalActiveCred.SecretKey, ""),
 			Secure:    globalIsTLS,
-			Transport: globalProxyTransport,
+			Transport: globalRemoteTargetTransport,
 			Region:    region,
 		})
 		logger.FatalIf(err, "Unable to initialize MinIO client")

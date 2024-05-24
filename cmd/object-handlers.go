@@ -488,21 +488,24 @@ func (api objectAPIHandlers) getObjectHandler(ctx context.Context, objectAPI Obj
 			reader *GetObjectReader
 			perr   error
 		)
-		proxytgts := getProxyTargets(ctx, bucket, object, opts)
-		if !proxytgts.Empty() {
-			globalReplicationStats.incProxy(bucket, getObjectAPI, false)
-			// proxy to replication target if active-active replication is in place.
-			reader, proxy, perr = proxyGetToReplicationTarget(ctx, bucket, object, rs, r.Header, opts, proxytgts)
-			if perr != nil {
-				globalReplicationStats.incProxy(bucket, getObjectAPI, true)
-				proxyGetErr := ErrorRespToObjectError(perr, bucket, object)
-				if !isErrBucketNotFound(proxyGetErr) && !isErrObjectNotFound(proxyGetErr) && !isErrVersionNotFound(proxyGetErr) &&
-					!isErrPreconditionFailed(proxyGetErr) && !isErrInvalidRange(proxyGetErr) {
-					replLogIf(ctx, fmt.Errorf("Proxying request (replication) failed for %s/%s(%s) - %w", bucket, object, opts.VersionID, perr))
+		// avoid proxying if version is a delete marker
+		if !isErrMethodNotAllowed(err) && !(gr != nil && gr.ObjInfo.DeleteMarker) {
+			proxytgts := getProxyTargets(ctx, bucket, object, opts)
+			if !proxytgts.Empty() {
+				globalReplicationStats.incProxy(bucket, getObjectAPI, false)
+				// proxy to replication target if active-active replication is in place.
+				reader, proxy, perr = proxyGetToReplicationTarget(ctx, bucket, object, rs, r.Header, opts, proxytgts)
+				if perr != nil {
+					globalReplicationStats.incProxy(bucket, getObjectAPI, true)
+					proxyGetErr := ErrorRespToObjectError(perr, bucket, object)
+					if !isErrBucketNotFound(proxyGetErr) && !isErrObjectNotFound(proxyGetErr) && !isErrVersionNotFound(proxyGetErr) &&
+						!isErrPreconditionFailed(proxyGetErr) && !isErrInvalidRange(proxyGetErr) {
+						replLogIf(ctx, fmt.Errorf("Proxying request (replication) failed for %s/%s(%s) - %w", bucket, object, opts.VersionID, perr))
+					}
 				}
-			}
-			if reader != nil && proxy.Proxy && perr == nil {
-				gr = reader
+				if reader != nil && proxy.Proxy && perr == nil {
+					gr = reader
+				}
 			}
 		}
 		if reader == nil || !proxy.Proxy {
@@ -556,15 +559,23 @@ func (api objectAPIHandlers) getObjectHandler(ctx context.Context, objectAPI Obj
 	if !proxy.Proxy { // apply lifecycle rules only for local requests
 		// Automatically remove the object/version if an expiry lifecycle rule can be applied
 		if lc, err := globalLifecycleSys.Get(bucket); err == nil {
-			rcfg, _ := globalBucketObjectLockSys.Get(bucket)
-			replcfg, _ := getReplicationConfig(ctx, bucket)
+			rcfg, err := globalBucketObjectLockSys.Get(bucket)
+			if err != nil {
+				writeErrorResponse(ctx, w, toAPIError(ctx, err), r.URL)
+				return
+			}
+			replcfg, err := getReplicationConfig(ctx, bucket)
+			if err != nil {
+				writeErrorResponse(ctx, w, toAPIError(ctx, err), r.URL)
+				return
+			}
 			event := evalActionFromLifecycle(ctx, *lc, rcfg, replcfg, objInfo)
 			if event.Action.Delete() {
 				// apply whatever the expiry rule is.
 				applyExpiryRule(event, lcEventSrc_s3GetObject, objInfo)
 				if !event.Action.DeleteRestored() {
 					// If the ILM action is not on restored object return error.
-					writeErrorResponseHeadersOnly(w, errorCodes.ToAPIErr(ErrNoSuchKey))
+					writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ErrNoSuchKey), r.URL)
 					return
 				}
 			}
@@ -636,7 +647,7 @@ func (api objectAPIHandlers) getObjectHandler(ctx context.Context, objectAPI Obj
 		}()
 	}
 
-	if err = setObjectHeaders(w, objInfo, rs, opts); err != nil {
+	if err = setObjectHeaders(ctx, w, objInfo, rs, opts); err != nil {
 		writeErrorResponse(ctx, w, toAPIError(ctx, err), r.URL)
 		return
 	}
@@ -728,7 +739,7 @@ func (api objectAPIHandlers) getObjectAttributesHandler(ctx context.Context, obj
 	}
 
 	if _, err = DecryptObjectInfo(&objInfo, r); err != nil {
-		writeErrorResponseHeadersOnly(w, toAPIError(ctx, err))
+		writeErrorResponse(ctx, w, toAPIError(ctx, err), r.URL)
 		return
 	}
 
@@ -775,7 +786,7 @@ func (api objectAPIHandlers) getObjectAttributesHandler(ctx context.Context, obj
 	}
 
 	if _, ok := opts.ObjectAttributes[xhttp.StorageClass]; ok {
-		OA.StorageClass = objInfo.StorageClass
+		OA.StorageClass = filterStorageClass(ctx, objInfo.StorageClass)
 	}
 
 	objInfo.decryptPartsChecksums()
@@ -1016,7 +1027,7 @@ func (api objectAPIHandlers) headObjectHandler(ctx context.Context, objectAPI Ob
 
 	objInfo, err := getObjectInfo(ctx, bucket, object, opts)
 	var proxy proxyResult
-	if err != nil {
+	if err != nil && !objInfo.DeleteMarker && !isErrMethodNotAllowed(err) {
 		// proxy HEAD to replication target if active-active replication configured on bucket
 		proxytgts := getProxyTargets(ctx, bucket, object, opts)
 		if !proxytgts.Empty() {
@@ -1077,8 +1088,16 @@ func (api objectAPIHandlers) headObjectHandler(ctx context.Context, objectAPI Ob
 	if !proxy.Proxy { // apply lifecycle rules only locally not for proxied requests
 		// Automatically remove the object/version if an expiry lifecycle rule can be applied
 		if lc, err := globalLifecycleSys.Get(bucket); err == nil {
-			rcfg, _ := globalBucketObjectLockSys.Get(bucket)
-			replcfg, _ := getReplicationConfig(ctx, bucket)
+			rcfg, err := globalBucketObjectLockSys.Get(bucket)
+			if err != nil {
+				writeErrorResponseHeadersOnly(w, toAPIError(ctx, err))
+				return
+			}
+			replcfg, err := getReplicationConfig(ctx, bucket)
+			if err != nil {
+				writeErrorResponseHeadersOnly(w, toAPIError(ctx, err))
+				return
+			}
 			event := evalActionFromLifecycle(ctx, *lc, rcfg, replcfg, objInfo)
 			if event.Action.Delete() {
 				// apply whatever the expiry rule is.
@@ -1154,7 +1173,7 @@ func (api objectAPIHandlers) headObjectHandler(ctx context.Context, objectAPI Ob
 	}
 
 	// Set standard object headers.
-	if err = setObjectHeaders(w, objInfo, rs, opts); err != nil {
+	if err = setObjectHeaders(ctx, w, objInfo, rs, opts); err != nil {
 		writeErrorResponseHeadersOnly(w, toAPIError(ctx, err))
 		return
 	}
@@ -1309,7 +1328,7 @@ func getRemoteInstanceTransport() http.RoundTripper {
 // Returns a minio-go Client configured to access remote host described by destDNSRecord
 // Applicable only in a federated deployment
 var getRemoteInstanceClient = func(r *http.Request, host string) (*miniogo.Core, error) {
-	cred := getReqAccessCred(r, globalSite.Region)
+	cred := getReqAccessCred(r, globalSite.Region())
 	// In a federated deployment, all the instances share config files
 	// and hence expected to have same credentials.
 	core, err := miniogo.NewCore(host, &miniogo.Options{
@@ -2084,7 +2103,7 @@ func (api objectAPIHandlers) PutObjectHandler(w http.ResponseWriter, r *http.Req
 		}
 
 	case authTypePresigned, authTypeSigned:
-		if s3Err = reqSignatureV4Verify(r, globalSite.Region, serviceS3); s3Err != ErrNone {
+		if s3Err = reqSignatureV4Verify(r, globalSite.Region(), serviceS3); s3Err != ErrNone {
 			writeErrorResponse(ctx, w, errorCodes.ToAPIErr(s3Err), r.URL)
 			return
 		}
@@ -2502,7 +2521,7 @@ func (api objectAPIHandlers) PutObjectExtractHandler(w http.ResponseWriter, r *h
 		}
 
 	case authTypePresigned, authTypeSigned:
-		if s3Err = reqSignatureV4Verify(r, globalSite.Region, serviceS3); s3Err != ErrNone {
+		if s3Err = reqSignatureV4Verify(r, globalSite.Region(), serviceS3); s3Err != ErrNone {
 			writeErrorResponse(ctx, w, errorCodes.ToAPIErr(s3Err), r.URL)
 			return
 		}

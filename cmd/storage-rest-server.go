@@ -67,7 +67,7 @@ var (
 	storageWriteAllRPC         = grid.NewSingleHandler[*WriteAllHandlerParams, grid.NoPayload](grid.HandlerWriteAll, func() *WriteAllHandlerParams { return &WriteAllHandlerParams{} }, grid.NewNoPayload)
 	storageReadVersionRPC      = grid.NewSingleHandler[*grid.MSS, *FileInfo](grid.HandlerReadVersion, grid.NewMSS, func() *FileInfo { return &FileInfo{} })
 	storageReadXLRPC           = grid.NewSingleHandler[*grid.MSS, *RawFileInfo](grid.HandlerReadXL, grid.NewMSS, func() *RawFileInfo { return &RawFileInfo{} })
-	storageRenameDataRPC       = grid.NewSingleHandler[*RenameDataHandlerParams, *RenameDataResp](grid.HandlerRenameData, func() *RenameDataHandlerParams { return &RenameDataHandlerParams{} }, func() *RenameDataResp { return &RenameDataResp{} })
+	storageRenameDataRPC       = grid.NewSingleHandler[*RenameDataHandlerParams, *RenameDataResp](grid.HandlerRenameData2, func() *RenameDataHandlerParams { return &RenameDataHandlerParams{} }, func() *RenameDataResp { return &RenameDataResp{} })
 	storageRenameDataInlineRPC = grid.NewSingleHandler[*RenameDataInlineHandlerParams, *RenameDataResp](grid.HandlerRenameDataInline, newRenameDataInlineHandlerParams, func() *RenameDataResp { return &RenameDataResp{} }).AllowCallRequestPool(false)
 	storageRenameFileRPC       = grid.NewSingleHandler[*RenameFileHandlerParams, grid.NoPayload](grid.HandlerRenameFile, func() *RenameFileHandlerParams { return &RenameFileHandlerParams{} }, grid.NewNoPayload).AllowCallRequestPool(true)
 	storageStatVolRPC          = grid.NewSingleHandler[*grid.MSS, *VolInfo](grid.HandlerStatVol, grid.NewMSS, func() *VolInfo { return &VolInfo{} })
@@ -80,11 +80,7 @@ func getStorageViaEndpoint(endpoint Endpoint) StorageAPI {
 	globalLocalDrivesMu.RLock()
 	defer globalLocalDrivesMu.RUnlock()
 	if len(globalLocalSetDrives) == 0 {
-		for _, drive := range globalLocalDrives {
-			if drive != nil && drive.Endpoint().Equal(endpoint) {
-				return drive
-			}
-		}
+		return globalLocalDrivesMap[endpoint.String()]
 	}
 	return globalLocalSetDrives[endpoint.PoolIdx][endpoint.SetIdx][endpoint.DiskIdx]
 }
@@ -695,10 +691,8 @@ func (s *storageRESTServer) RenameDataHandler(p *RenameDataHandlerParams) (*Rena
 		return nil, grid.NewRemoteErr(errDiskNotFound)
 	}
 
-	sign, err := s.getStorage().RenameData(context.Background(), p.SrcVolume, p.SrcPath, p.FI, p.DstVolume, p.DstPath, p.Opts)
-	return &RenameDataResp{
-		Signature: sign,
-	}, grid.NewRemoteErr(err)
+	resp, err := s.getStorage().RenameData(context.Background(), p.SrcVolume, p.SrcPath, p.FI, p.DstVolume, p.DstPath, p.Opts)
+	return &resp, grid.NewRemoteErr(err)
 }
 
 // RenameDataInlineHandler - renames a meta object and data dir to destination.
@@ -793,9 +787,26 @@ func keepHTTPReqResponseAlive(w http.ResponseWriter, r *http.Request) (resp func
 		defer xioutil.SafeClose(doneCh)
 		// Initiate ticker after body has been read.
 		ticker := time.NewTicker(time.Second * 10)
+		defer ticker.Stop()
+
 		for {
 			select {
 			case <-ticker.C:
+				// The done() might have been called
+				// concurrently, check for it before we
+				// write the filler byte.
+				select {
+				case err := <-doneCh:
+					if err != nil {
+						write([]byte{1})
+						write([]byte(err.Error()))
+					} else {
+						write([]byte{0})
+					}
+					return
+				default:
+				}
+
 				// Response not ready, write a filler byte.
 				write([]byte{32})
 				if canWrite {
@@ -808,7 +819,6 @@ func keepHTTPReqResponseAlive(w http.ResponseWriter, r *http.Request) (resp func
 				} else {
 					write([]byte{0})
 				}
-				ticker.Stop()
 				return
 			}
 		}
@@ -856,6 +866,21 @@ func keepHTTPResponseAlive(w http.ResponseWriter) func(error) {
 		for {
 			select {
 			case <-ticker.C:
+				// The done() might have been called
+				// concurrently, check for it before we
+				// write the filler byte.
+				select {
+				case err := <-doneCh:
+					if err != nil {
+						write([]byte{1})
+						write([]byte(err.Error()))
+					} else {
+						write([]byte{0})
+					}
+					return
+				default:
+				}
+
 				// Response not ready, write a filler byte.
 				write([]byte{32})
 				if canWrite {
@@ -1338,7 +1363,7 @@ func registerStorageRESTHandlers(router *mux.Router, endpointServerPools Endpoin
 				OutCapacity: 1,
 			}), "unable to register handler")
 
-			createStorage := func(server *storageRESTServer) bool {
+			createStorage := func(endpoint Endpoint) bool {
 				xl, err := newXLStorage(endpoint, false)
 				if err != nil {
 					// if supported errors don't fail, we proceed to
@@ -1358,23 +1383,24 @@ func registerStorageRESTHandlers(router *mux.Router, endpointServerPools Endpoin
 				defer globalLocalDrivesMu.Unlock()
 
 				globalLocalDrives = append(globalLocalDrives, storage)
+				globalLocalDrivesMap[endpoint.String()] = storage
 				globalLocalSetDrives[endpoint.PoolIdx][endpoint.SetIdx][endpoint.DiskIdx] = storage
 				return true
 			}
 
-			if createStorage(server) {
+			if createStorage(endpoint) {
 				continue
 			}
 
 			// Start async goroutine to create storage.
-			go func(server *storageRESTServer) {
+			go func(endpoint Endpoint) {
 				for {
 					time.Sleep(3 * time.Second)
-					if createStorage(server) {
+					if createStorage(endpoint) {
 						return
 					}
 				}
-			}(server)
+			}(endpoint)
 
 		}
 	}

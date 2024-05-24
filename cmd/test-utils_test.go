@@ -110,11 +110,7 @@ func TestMain(m *testing.M) {
 	setMaxResources(nil)
 
 	// Initialize globalConsoleSys system
-	globalConsoleSys = console.NewConsoleLogger(
-		context.Background(),
-		globalIsDistErasure,
-		globalLocalNodeName,
-	)
+	globalConsoleSys = NewConsoleLogger(context.Background(), io.Discard)
 
 	globalInternodeTransport = NewInternodeHTTPTransport(0)()
 
@@ -220,6 +216,27 @@ func prepareErasure(ctx context.Context, nDisks int) (ObjectLayer, []string, err
 	if err != nil {
 		removeRoots(fsDirs)
 		return nil, nil, err
+	}
+
+	// Wait up to 10 seconds for disks to come online.
+	pools := obj.(*erasureServerPools)
+	t := time.Now()
+	for _, pool := range pools.serverPools {
+		for _, sets := range pool.erasureDisks {
+			for _, s := range sets {
+				if !s.IsLocal() {
+					for {
+						if s.IsOnline() {
+							break
+						}
+						time.Sleep(100 * time.Millisecond)
+						if time.Since(t) > 10*time.Second {
+							return nil, nil, errors.New("timeout waiting for disk to come online")
+						}
+					}
+				}
+			}
+		}
 	}
 
 	return obj, fsDirs, nil
@@ -734,7 +751,7 @@ func newTestStreamingRequest(method, urlStr string, dataLength, chunkSize int64,
 func assembleStreamingChunks(req *http.Request, body io.ReadSeeker, chunkSize int64,
 	secretKey, signature string, currTime time.Time) (*http.Request, error,
 ) {
-	regionStr := globalSite.Region
+	regionStr := globalSite.Region()
 	var stream []byte
 	var buffer []byte
 	body.Seek(0, 0)
@@ -842,7 +859,7 @@ func preSignV4(req *http.Request, accessKeyID, secretAccessKey string, expires i
 		return errors.New("Presign cannot be generated without access and secret keys")
 	}
 
-	region := globalSite.Region
+	region := globalSite.Region()
 	date := UTCNow()
 	scope := getScope(date, region)
 	credential := fmt.Sprintf("%s/%s", accessKeyID, scope)
@@ -970,7 +987,7 @@ func signRequestV4(req *http.Request, accessKey, secretKey string) error {
 	}
 	sort.Strings(headers)
 
-	region := globalSite.Region
+	region := globalSite.Region()
 
 	// Get canonical headers.
 	var buf bytes.Buffer
@@ -1383,7 +1400,7 @@ func getListObjectVersionsURL(endPoint, bucketName, prefix, maxKeys, encodingTyp
 }
 
 // return URL for listing objects in the bucket with V2 API.
-func getListObjectsV2URL(endPoint, bucketName, prefix, maxKeys, fetchOwner, encodingType string) string {
+func getListObjectsV2URL(endPoint, bucketName, prefix, maxKeys, fetchOwner, encodingType, delimiter string) string {
 	queryValue := url.Values{}
 	queryValue.Set("list-type", "2") // Enables list objects V2 URL.
 	if maxKeys != "" {
@@ -1395,7 +1412,13 @@ func getListObjectsV2URL(endPoint, bucketName, prefix, maxKeys, fetchOwner, enco
 	if encodingType != "" {
 		queryValue.Set("encoding-type", encodingType)
 	}
-	return makeTestTargetURL(endPoint, bucketName, prefix, queryValue)
+	if prefix != "" {
+		queryValue.Set("prefix", prefix)
+	}
+	if delimiter != "" {
+		queryValue.Set("delimiter", delimiter)
+	}
+	return makeTestTargetURL(endPoint, bucketName, "", queryValue)
 }
 
 // return URL for a new multipart upload.

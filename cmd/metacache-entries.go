@@ -120,6 +120,16 @@ func (e *metaCacheEntry) matches(other *metaCacheEntry, strict bool) (prefer *me
 	for i, eVer := range eVers.versions {
 		oVer := oVers.versions[i]
 		if eVer.header != oVer.header {
+			if eVer.header.hasEC() != oVer.header.hasEC() {
+				// One version has EC and the other doesn't - may have been written later.
+				// Compare without considering EC.
+				a, b := eVer.header, oVer.header
+				a.EcN, a.EcM = 0, 0
+				b.EcN, b.EcM = 0, 0
+				if a == b {
+					continue
+				}
+			}
 			if !strict && eVer.header.matchesNotStrict(oVer.header) {
 				if prefer == nil {
 					if eVer.header.sortsBefore(oVer.header) {
@@ -726,16 +736,37 @@ func mergeEntryChannels(ctx context.Context, in []chan metaCacheEntry, out chan<
 				bestIdx = otherIdx
 				continue
 			}
-			// We should make sure to avoid objects and directories
-			// of this fashion such as
-			//  - foo-1
-			//  - foo-1/
-			// we should avoid this situation by making sure that
-			// we compare the `foo-1/` after path.Clean() to
-			// de-dup the entries.
 			if path.Clean(best.name) == path.Clean(other.name) {
-				toMerge = append(toMerge, otherIdx)
-				continue
+				// We may be in a situation where we have a directory and an object with the same name.
+				// In that case we will drop the directory entry.
+				// This should however not be confused with an object with a trailing slash.
+				dirMatches := best.isDir() == other.isDir()
+				suffixMatches := strings.HasSuffix(best.name, slashSeparator) == strings.HasSuffix(other.name, slashSeparator)
+
+				// Simple case. Both are same type with same suffix.
+				if dirMatches && suffixMatches {
+					toMerge = append(toMerge, otherIdx)
+					continue
+				}
+
+				if !dirMatches {
+					// We have an object `name` or 'name/' and a directory `name/`.
+					if other.isDir() {
+						console.Debugln("mergeEntryChannels: discarding directory", other.name, "for object", best.name)
+						// Discard the directory.
+						if err := selectFrom(otherIdx); err != nil {
+							return err
+						}
+						continue
+					}
+					// Replace directory with object.
+					console.Debugln("mergeEntryChannels: discarding directory", best.name, "for object", other.name)
+					toMerge = toMerge[:0]
+					best = other
+					bestIdx = otherIdx
+					continue
+				}
+				// Leave it to be resolved. Names are different.
 			}
 			if best.name > other.name {
 				toMerge = toMerge[:0]

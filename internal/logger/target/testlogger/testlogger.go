@@ -27,15 +27,12 @@
 package testlogger
 
 import (
-	"context"
 	"fmt"
 	"os"
 	"strings"
 	"sync/atomic"
 	"testing"
 
-	"github.com/minio/minio/internal/logger"
-	"github.com/minio/minio/internal/logger/target/types"
 	"github.com/minio/pkg/v3/logger/message/log"
 )
 
@@ -45,12 +42,7 @@ const (
 	fatalMessage
 )
 
-// T is the test logger.
 var T = &testLogger{}
-
-func init() {
-	logger.AddSystemTarget(context.Background(), T)
-}
 
 type testLogger struct {
 	current atomic.Pointer[testing.TB]
@@ -84,36 +76,7 @@ func (t *testLogger) setTB(tb testing.TB, action int32) func() {
 	}
 }
 
-func (t *testLogger) String() string {
-	tb := t.current.Load()
-	if tb != nil {
-		tbb := *tb
-		return tbb.Name()
-	}
-	return ""
-}
-
-func (t *testLogger) Endpoint() string {
-	return ""
-}
-
-func (t *testLogger) Stats() types.TargetStats {
-	return types.TargetStats{}
-}
-
-func (t *testLogger) Init(ctx context.Context) error {
-	return nil
-}
-
-func (t *testLogger) IsOnline(ctx context.Context) bool {
-	return t.current.Load() != nil
-}
-
-func (t *testLogger) Cancel() {
-	t.current.Store(nil)
-}
-
-func (t *testLogger) Send(ctx context.Context, entry interface{}) error {
+func (t *testLogger) Write(entry interface{}) error {
 	tb := t.current.Load()
 	var logf func(format string, args ...any)
 	if tb != nil {
@@ -163,8 +126,4 @@ func (t *testLogger) Send(ctx context.Context, entry interface{}) error {
 		logf("%+v (%T)", v, v)
 	}
 	return nil
-}
-
-func (t *testLogger) Type() types.TargetType {
-	return types.TargetConsole
 }

@@ -705,8 +705,6 @@ func getServerListenAddrs() []string {
 	return addrs.ToSlice()
 }
 
-var globalLoggerOutput io.WriteCloser
-
 func initializeLogRotate(ctx *cli.Context) (io.WriteCloser, error) {
 	lgDir := ctx.String("log-dir")
 	if lgDir == "" {
@@ -748,29 +746,39 @@ func serverMain(ctx *cli.Context) {
 
 	setDefaultProfilerRates()
 
+	// Always load ENV variables from files first.
+	loadEnvVarsFromFiles()
+
 	// Initialize globalConsoleSys system
-	bootstrapTrace("newConsoleLogger", func() {
+	bootstrapTrace("initializeGlobalLoggingSystem", func() {
 		output, err := initializeLogRotate(ctx)
-		if err == nil {
-			logger.Output = output
-			globalConsoleSys = NewConsoleLogger(GlobalContext, output)
-			globalLoggerOutput = output
-		} else {
-			logger.Output = os.Stderr
-			globalConsoleSys = NewConsoleLogger(GlobalContext, os.Stderr)
+		if err != nil {
+			logger.Writer = os.Stderr
+			logger.Fatal(err, "invalid --logrorate-dir option")
 		}
-		logger.AddSystemTarget(GlobalContext, globalConsoleSys)
+
+		logger.Writer = output
+
+		loggerErr := logger.StartSystemLogQueue(GlobalContext)
+		if loggerErr != nil {
+			logger.Fatal(err, "unable to start the internal logging system")
+		}
+
+		loggerErr = logger.StartAuditLogQueue(GlobalContext)
+		if loggerErr != nil {
+			logger.Fatal(err, "unable to start the audit logging system")
+		}
+
+		globalConsoleSys = logger.NewConsolePubSubTarget(
+			GlobalContext,
+			globalIsDistErasure,
+			globalLocalNodeName,
+			output,
+		)
 
 		// Set node name, only set for distributed setup.
 		globalConsoleSys.SetNodeName(globalLocalNodeName)
-		if err != nil {
-			// We can only log here since we need globalConsoleSys initialized
-			logger.Fatal(err, "invalid --logrorate-dir option")
-		}
 	})
-
-	// Always load ENV variables from files first.
-	loadEnvVarsFromFiles()
 
 	// Handle all server command args and build the disks layout
 	bootstrapTrace("serverHandleCmdArgs", func() {

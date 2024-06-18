@@ -45,7 +45,7 @@ type Target interface {
 // Store - Used to persist items.
 type Store[I any] interface {
 	Put(item I) error
-	PutMultiple(item []I) error
+	PutBatch(item []I) error
 	Get(key string) (I, error)
 	GetRaw(key string) ([]byte, error)
 	Len() int

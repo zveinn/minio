@@ -457,7 +457,7 @@ func (er erasureObjects) GetObjectInfo(ctx context.Context, bucket, object strin
 }
 
 func auditDanglingObjectDeletion(ctx context.Context, bucket, object, versionID string, tags map[string]interface{}) {
-	if len(logger.AuditTargets()) == 0 {
+	if logger.GlobalAuditLogger.TargetCount() == 0 {
 		return
 	}
 

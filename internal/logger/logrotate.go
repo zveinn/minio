@@ -56,8 +56,8 @@ type Options struct {
 	Compress bool
 }
 
-// Writer is a concurrency-safe writer with file rotation.
-type Writer struct {
+// RotateWriter is a concurrency-safe writer with file rotation.
+type RotateWriter struct {
 	// opts are the configuration options for this Writer
 	opts Options
 
@@ -73,14 +73,14 @@ type Writer struct {
 // Write writes p into the current file, rotating if necessary.
 // Write is non-blocking, if the writer's queue is not full.
 // Write is blocking otherwise.
-func (w *Writer) Write(p []byte) (n int, err error) {
+func (w *RotateWriter) Write(p []byte) (n int, err error) {
 	return w.pw.Write(p)
 }
 
 // Close closes the writer.
 // Any accepted writes will be flushed. Any new writes will be rejected.
 // Once Close() exits, files are synchronized to disk.
-func (w *Writer) Close() error {
+func (w *RotateWriter) Close() error {
 	w.pw.CloseWithError(nil)
 
 	if w.f != nil {
@@ -94,7 +94,7 @@ func (w *Writer) Close() error {
 
 var stdErrEnc = json.NewEncoder(os.Stderr)
 
-func (w *Writer) listen() {
+func (w *RotateWriter) listen() {
 	for {
 		var r io.Reader = w.pr
 		if w.opts.MaximumFileSize > 0 {
@@ -121,7 +121,7 @@ func (w *Writer) listen() {
 	}
 }
 
-func (w *Writer) closeCurrentFile() error {
+func (w *RotateWriter) closeCurrentFile() error {
 	if err := w.f.Close(); err != nil {
 		return fmt.Errorf("unable to close current log file: %w", err)
 	}
@@ -129,7 +129,7 @@ func (w *Writer) closeCurrentFile() error {
 	return nil
 }
 
-func (w *Writer) compress() error {
+func (w *RotateWriter) compress() error {
 	if !w.opts.Compress {
 		return nil
 	}
@@ -175,7 +175,7 @@ func (w *Writer) compress() error {
 	return os.Remove(oldLgFile)
 }
 
-func (w *Writer) rotate() error {
+func (w *RotateWriter) rotate() error {
 	if w.f != nil {
 		if err := w.closeCurrentFile(); err != nil {
 			return err
@@ -218,7 +218,7 @@ func NewDir(opts Options) (io.WriteCloser, error) {
 
 	pr, pw := xioutil.WaitPipe()
 
-	w := &Writer{
+	w := &RotateWriter{
 		opts: opts,
 		pw:   pw,
 		pr:   pr,

@@ -41,3 +41,14 @@ type TargetStats struct {
 	// FailedMessages should log message count that failed to send.
 	FailedMessages int64
 }
+
+// EncoderType defines the specific encoding used
+// for each logger target
+
+type EncoderType string
+
+const (
+	EncoderNone EncoderType = "none"
+	EncoderJSON EncoderType = "json"
+	EncoderCBOR EncoderType = "cbor"
+)

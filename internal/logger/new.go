@@ -7,7 +7,9 @@ import (
 	"io"
 	"log"
 	"os"
+	"path/filepath"
 	"runtime/debug"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -17,6 +19,7 @@ import (
 	"github.com/minio/minio/internal/logger/target/kafka"
 	"github.com/minio/minio/internal/logger/target/testlogger"
 	"github.com/minio/minio/internal/logger/target/types"
+	"github.com/minio/minio/internal/store"
 	"github.com/valyala/bytebufferpool"
 )
 
@@ -27,6 +30,7 @@ var (
 	httpLoggerPrefix    = "http"
 
 	BatchFileMetaSuffix     = "_meta"
+	errorSleepTime          = time.Duration(100 * time.Millisecond)
 	maxWorkers              = 20
 	TargetDefaultMaxWorkers = 20
 	globlQueueBatchSize     = 1000
@@ -58,7 +62,8 @@ type GlobalBatchQueue struct {
 
 	// Currently active targets which will
 	// receive copies of entry batches
-	Targets []*QueueTarget
+	Targets    []*QueueTarget
+	TargetLock sync.Mutex
 
 	// When targets are updated or added
 	// they will be places on this queue
@@ -205,8 +210,8 @@ func (g *GlobalBatchQueue) Init(ctx context.Context) {
 				continue
 			}
 			// fmt.Println(g.Name, ">", "BATCH:", batchIndex, len(g.Ch), cap(g.Ch))
-		default:
-			time.Sleep(100 * time.Microsecond)
+			// default:
+			// time.Sleep(100 * time.Microsecond)
 			continue
 		}
 
@@ -330,7 +335,6 @@ type QueueTarget struct {
 
 	TotalMessages  int64
 	FailedMessages int64
-	State          int64
 }
 
 type queueRuntime struct {
@@ -353,21 +357,27 @@ type BatchInterfaceWriter interface {
 }
 
 func (g *GlobalBatchQueue) RemoveTarget(ctx context.Context, t *QueueTarget) {
+	g.TargetLock.Lock()
+	defer g.TargetLock.Unlock()
+
 	// TODO....
-	// g.Targets = append(g.Targets, t)
-	// t.Start(ctx)
+
 	return
 }
 
 func (g *GlobalBatchQueue) InitializeTarget(ctx context.Context, t *QueueTarget) {
+	g.TargetLock.Lock()
+	defer g.TargetLock.Unlock()
+
 	t.Bm = g.BatchManager
+
 	g.Targets = append(g.Targets, t)
+
 	go t.launchFanOutWorker(ctx, true)
 	return
 }
 
 func (g *GlobalBatchQueue) FindTarget(name string) *QueueTarget {
-	fmt.Println("G:", g)
 	fmt.Println("TARGETS:", g.Targets)
 	for i := range g.Targets {
 		if g.Targets[i].name == name {
@@ -421,12 +431,12 @@ func (t *QueueTarget) spawnMoreWorkers(ctx context.Context) {
 	}
 }
 
-func (b *DiskBatchManager) SendUpdate(targetName string, uuid string) {
+func (b *DiskBatchManager) SendUpdate(targetName string, uuid string, status batchStatus) {
 	select {
 	case b.BatchStateCh <- &batchStateUpdate{
 		Target:    targetName,
 		BatchUUID: uuid,
-		// LastSuccessIndex: lastSuccessIndex,
+		Status:    status,
 	}:
 	default:
 		// TODO .. error stdout!
@@ -468,30 +478,35 @@ func (t *QueueTarget) launchFanOutWorker(ctx context.Context, isPrimary bool) {
 
 	r := t.runtime.Load()
 
-	postWriteOpsCheck := func(err error) (shouldRetry bool) {
+	postWriteOpsCheck := func(err error) (success bool, shouldRetry bool) {
 		if isPrimary && t.maxWorkers > 1 {
 			t.spawnMoreWorkers(ctx)
 		}
 
 		if err == nil {
-			atomic.AddInt64(&t.State, 1)
-			return false
+			return true, false
 		}
 
 		if errors.Is(err, context.Canceled) {
-			return false
+			return false, false
 		}
 
-		atomic.AddInt64(&t.FailedMessages, int64(r.BatchSize))
-		atomic.AddInt64(&t.State, 0)
+		// atomic.AddInt64(&t.FailedMessages, int64(r.BatchSize))
 
+		// If the endpoint is offline we slow things down a bit
+		// in order to not create to many useless sockets
+		// or spam the network with pointless requests
 		if len(t.Ch) < (cap(t.Ch)/10)*9 {
-			time.Sleep(1 * time.Millisecond)
-			return true
+			// 	time.Sleep(errorSleepTime)
+			return false, true
 		}
 
-		return false
+		return false, false
 	}
+
+	var bs batchStatus
+	var retry bool
+	var success bool
 
 	for {
 		byteBuffer.Reset()
@@ -512,14 +527,22 @@ func (t *QueueTarget) launchFanOutWorker(ctx context.Context, isPrimary bool) {
 			return
 		}
 
+		bs = statusFailed
+
 		atomic.AddInt64(&t.TotalMessages, int64(batch.totalEntries))
 
 		if r.BatchWriter != nil {
 
 		retryBatch:
 			_, err = r.BatchWriter.WriteBatch(batch.entries)
-			if postWriteOpsCheck(err) {
+			success, retry = postWriteOpsCheck(err)
+			if retry {
 				goto retryBatch
+			}
+			if success {
+				bs = statusSent
+			} else {
+				bs = statusFailed
 			}
 
 		} else if r.InterfaceWriter != nil {
@@ -530,12 +553,19 @@ func (t *QueueTarget) launchFanOutWorker(ctx context.Context, isPrimary bool) {
 
 			retryInterface:
 				err = r.InterfaceWriter.Write(batch.entries[i])
-				if postWriteOpsCheck(err) {
+				success, retry = postWriteOpsCheck(err)
+				if retry {
 					goto retryInterface
 				}
-
 			}
-		} else {
+
+			if success {
+				bs = statusSent
+			} else {
+				bs = statusFailed
+			}
+
+		} else if r.Writer != nil {
 			for i := range batch.entries {
 				if batch.entries[i] == nil {
 					break
@@ -543,6 +573,7 @@ func (t *QueueTarget) launchFanOutWorker(ctx context.Context, isPrimary bool) {
 
 				if err := encode(batch.entries[i], r); err != nil {
 					// TODO .. LOG THIS TO CONSOLE
+					// TODO .. add to Error count
 					atomic.AddInt64(&t.FailedMessages, 1)
 					continue
 				}
@@ -553,17 +584,28 @@ func (t *QueueTarget) launchFanOutWorker(ctx context.Context, isPrimary bool) {
 
 			retry:
 				_, err = r.Writer.Write(byteBuffer.Bytes())
-				if postWriteOpsCheck(err) {
+				success, retry = postWriteOpsCheck(err)
+				if retry {
 					goto retry
 				}
 
+				byteBuffer.Reset()
 			}
+
+			if success {
+				bs = statusSent
+			} else {
+				bs = statusFailed
+			}
+
+		} else {
+			//// HUGE FAILURE .. update failure stats...
 		}
 
 		// TODO .. recognize a drop because of capacity and log to stdout
 
 		if t.Bm != nil {
-			t.Bm.SendUpdate(t.name, batch.UUID)
+			t.Bm.SendUpdate(t.name, batch.UUID, bs)
 		}
 
 	}
@@ -593,20 +635,28 @@ type DiskBatchManager struct {
 	FileDir      string
 }
 
+type batchStatus int
+
+const (
+	statusNone batchStatus = iota
+	statusSent
+	statusFailed
+)
+
 type Batch struct {
 	UUID         string
 	entries      []interface{}
 	totalEntries int
-	// target // last entry index
-	sentStatus map[string]bool
-	lastUpdate time.Time
-	lastWrite  time.Time
-	Created    time.Time
+	Status       map[string]batchStatus
+	lastUpdate   time.Time
+	lastSync     time.Time
+	Created      time.Time
 }
 
 type batchStateUpdate struct {
 	Target    string
 	BatchUUID string
+	Status    batchStatus
 }
 
 func newBatchManager(
@@ -671,14 +721,10 @@ func (bm *DiskBatchManager) SyncMeta() {
 
 	for buuid, batch := range bm.Batches {
 		isBatchDone := true
-		for _, done := range batch.sentStatus {
+		for _, done := range batch.Status {
 			if !done {
 				isBatchDone = false
 			}
-			// if uint16(len(batch.entries)) > lastSendIndex {
-			// 	isBatchDone = false
-			// 	break
-			// }
 		}
 
 		if isBatchDone {
@@ -693,13 +739,13 @@ func (bm *DiskBatchManager) SyncMeta() {
 			continue
 		}
 
-		if batch.lastUpdate.Before(batch.lastWrite) {
+		if batch.lastUpdate.Before(batch.lastSync) {
 			continue
 		}
 
 		bm.MetaFiles[buuid].Seek(0, 0)
 
-		for targetName, done := range batch.sentStatus {
+		for targetName, done := range batch.Status {
 			if done {
 				bm.MetaFiles[buuid].Write([]byte{1})
 			} else {
@@ -719,7 +765,7 @@ func (bm *DiskBatchManager) UpdateBatch(s *batchStateUpdate) {
 		b = bm.Batches[s.BatchUUID]
 	}
 	b.lastUpdate = time.Now()
-	b.sentStatus[s.Target] = true
+	b.Status[s.Target] = true
 	return
 }
 
@@ -729,7 +775,7 @@ func (bm *DiskBatchManager) CreateBatch(b *Batch) {
 	cb, ok := bm.Batches[b.UUID]
 	if ok {
 		b.lastUpdate = cb.lastUpdate
-		b.sentStatus = cb.sentStatus
+		b.Status = cb.Status
 	}
 
 	bm.Batches[b.UUID] = b
@@ -744,26 +790,31 @@ func (bm *DiskBatchManager) CreateBatch(b *Batch) {
 	for _, v := range b.entries {
 		err = encoder.Encode(v)
 		if err != nil {
+			// TODO STATS
 			panic(err)
 		}
 	}
 
 	err = os.WriteFile(bm.FileDir+b.UUID, byteBuffer.Bytes(), 0o666)
 	if err != nil {
+		// GlobalSystemLogger <-
+		// TODO ????
 		panic(err)
 	}
 
 	bm.MetaFiles[b.UUID], err = os.OpenFile(bm.FileDir+b.UUID+BatchFileMetaSuffix, os.O_RDWR|os.O_CREATE, 0o666)
 	if err != nil {
+		// TODO ?????
 		panic(err)
 	}
 
-	for i := range b.sentStatus {
+	for i := range b.Status {
 		// write name of target
 		bm.MetaFiles[b.UUID].Write([]byte(i))
 		// write uint16 (last sent index) + new line
 		bm.MetaFiles[b.UUID].Write([]byte{0, 0, 10})
 	}
+	bm.MetaFiles[b.UUID].Sync()
 }
 
 func newQueueTarget(
@@ -855,6 +906,19 @@ func UpdateHTTPSystemTargets(
 	return errs
 }
 
+func MigrateOldStore(cfg *http.Config) (err error) {
+	queueStore := store.NewQueueStore[interface{}](
+		filepath.Join(cfg.QueueDir, cfg.Name),
+		uint64(cfg.QueueSize),
+		httpLoggerExtension,
+	)
+
+	if err := queueStore.Open(); err != nil {
+		return fmt.Errorf("unable to initialize the queue store of %s webhook: %w", cfg.Name, err)
+	}
+	return nil
+}
+
 func UpdateHTTPAuditTargets(
 	ctx context.Context,
 	cfgs map[string]http.Config,
@@ -864,7 +928,9 @@ func UpdateHTTPAuditTargets(
 			continue
 		}
 
-		t, err := NewHTTPTarget(ctx, &cfg)
+		var t *QueueTarget
+		var err error
+		t, err = NewHTTPTarget(ctx, &cfg)
 		if err != nil {
 			errs = append(errs, err)
 			continue

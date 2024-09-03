@@ -54,12 +54,12 @@ const (
 	clusterIAMCollectorPath          collectorPath = "/cluster/iam"
 	clusterConfigCollectorPath       collectorPath = "/cluster/config"
 
-	ilmCollectorPath           collectorPath = "/ilm"
-	auditCollectorPath         collectorPath = "/audit"
-	loggerWebhookCollectorPath collectorPath = "/logger/webhook"
-	replicationCollectorPath   collectorPath = "/replication"
-	notificationCollectorPath  collectorPath = "/notification"
-	scannerCollectorPath       collectorPath = "/scanner"
+	ilmCollectorPath          collectorPath = "/ilm"
+	auditCollectorPath        collectorPath = "/audit"
+	stdoutCollectorPath       collectorPath = "/stdout"
+	replicationCollectorPath  collectorPath = "/replication"
+	notificationCollectorPath collectorPath = "/notification"
+	scannerCollectorPath      collectorPath = "/scanner"
 )
 
 const (
@@ -366,13 +366,15 @@ func newMetricGroups(r *prometheus.Registry) *metricsV3Collection {
 		loadClusterScannerMetrics,
 	)
 
-	loggerWebhookMG := NewMetricsGroup(loggerWebhookCollectorPath,
+	stdOutMSG := NewMetricsGroup(stdoutCollectorPath,
 		[]MetricDescriptor{
-			webhookFailedMessagesMD,
-			webhookQueueLengthMD,
-			webhookTotalMessagesMD,
+			stdoutFailedMessagesMD,
+			stdoutTargetQueueLengthMD,
+			stdoutTotalMessagesMD,
+			stdoutGlobalQueueSizeMD,
+			stdoutTotalTargetsMD,
 		},
-		loadLoggerWebhookMetrics,
+		loadSTDOutMetrics,
 	)
 
 	auditMG := NewMetricsGroup(auditCollectorPath,
@@ -380,6 +382,11 @@ func newMetricGroups(r *prometheus.Registry) *metricsV3Collection {
 			auditFailedMessagesMD,
 			auditTargetQueueLengthMD,
 			auditTotalMessagesMD,
+			auditGlobalQueueSizeMD,
+			auditRequestsTotalMD,
+			auditRequestsFailedMD,
+			auditTotalTargetsMD,
+			auditWorkerCountMD,
 		},
 		loadAuditMetrics,
 	)
@@ -418,7 +425,7 @@ func newMetricGroups(r *prometheus.Registry) *metricsV3Collection {
 		ilmMG,
 		scannerMG,
 		auditMG,
-		loggerWebhookMG,
+		stdOutMSG,
 	}
 
 	// Bucket metrics are special, they always include the bucket label. These

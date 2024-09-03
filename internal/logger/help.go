@@ -59,6 +59,12 @@ var (
 			Type:        "number",
 		},
 		config.HelpKV{
+			Key:         BatchPayloadSize,
+			Description: "Batch payload size in bytes",
+			Optional:    true,
+			Type:        "number",
+		},
+		config.HelpKV{
 			Key:         QueueSize,
 			Description: "configure channel queue size for webhook targets",
 			Optional:    true,
@@ -67,6 +73,24 @@ var (
 		config.HelpKV{
 			Key:         QueueDir,
 			Description: `staging dir for undelivered logger messages e.g. '/home/logger-events'`,
+			Optional:    true,
+			Type:        "string",
+		},
+		config.HelpKV{
+			Key:         httpTLSSkipVerify,
+			Description: "Enables skipping TLS verification",
+			Optional:    true,
+			Type:        "boolean",
+		},
+		config.HelpKV{
+			Key:         httpTimeout,
+			Description: "HTTP connect timeout",
+			Optional:    true,
+			Type:        "number",
+		},
+		config.HelpKV{
+			Key:         httpEncoding,
+			Description: "The type of encoding to use. Available: json(default), cbor",
 			Optional:    true,
 			Type:        "string",
 		},
@@ -132,6 +156,12 @@ var (
 			Type:        "number",
 		},
 		config.HelpKV{
+			Key:         BatchPayloadSize,
+			Description: "Batch payload size in bytes",
+			Optional:    true,
+			Type:        "number",
+		},
+		config.HelpKV{
 			Key:         QueueSize,
 			Description: "configure channel queue size for webhook targets",
 			Optional:    true,
@@ -143,6 +173,25 @@ var (
 			Optional:    true,
 			Type:        "string",
 		},
+		config.HelpKV{
+			Key:         httpTimeout,
+			Description: "HTTP connect timeout",
+			Optional:    true,
+			Type:        "number",
+		},
+		config.HelpKV{
+			Key:         httpTLSSkipVerify,
+			Description: "Enables skipping TLS verification",
+			Optional:    true,
+			Type:        "boolean",
+		},
+		config.HelpKV{
+			Key:         httpEncoding,
+			Description: "The type of encoding to use. Available: json(default), cbor",
+			Optional:    true,
+			Type:        "string",
+		},
+
 		config.HelpKV{
 			Key:         MaxRetry,
 			Description: `maximum retry count before we start dropping audit event(s)`,

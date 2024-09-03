@@ -449,10 +449,6 @@ func (er erasureObjects) GetObjectInfo(ctx context.Context, bucket, object strin
 }
 
 func auditDanglingObjectDeletion(ctx context.Context, bucket, object, versionID string, tags map[string]string) {
-	if len(logger.AuditTargets()) == 0 {
-		return
-	}
-
 	opts := AuditLogOptions{
 		Event:     "DeleteDanglingObject",
 		Bucket:    bucket,

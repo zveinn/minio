@@ -552,10 +552,6 @@ func (op auditObjectOp) String() string {
 
 // Add erasure set information to the current context
 func auditObjectErasureSet(ctx context.Context, api, object string, set *erasureObjects) {
-	if len(logger.AuditTargets()) == 0 {
-		return
-	}
-
 	op := auditObjectOp{
 		Name: decodeDirObject(object),
 		Pool: set.poolIndex + 1,

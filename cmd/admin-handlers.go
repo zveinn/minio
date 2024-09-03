@@ -3060,8 +3060,8 @@ func fetchKMSStatus(ctx context.Context) []madmin.KMS {
 	return stats
 }
 
-func targetStatus(ctx context.Context, h logger.Target) madmin.Status {
-	if h.IsOnline(ctx) {
+func targetStatus(h logger.QueueTargetStats) madmin.Status {
+	if h.IsOnline() {
 		return madmin.Status{Status: string(madmin.ItemOnline)}
 	}
 	return madmin.Status{Status: string(madmin.ItemOffline)}
@@ -3071,16 +3071,12 @@ func targetStatus(ctx context.Context, h logger.Target) madmin.Status {
 func fetchLoggerInfo(ctx context.Context) ([]madmin.Logger, []madmin.Audit) {
 	var loggerInfo []madmin.Logger
 	var auditloggerInfo []madmin.Audit
-	for _, tgt := range logger.SystemTargets() {
-		if tgt.Endpoint() != "" {
-			loggerInfo = append(loggerInfo, madmin.Logger{tgt.String(): targetStatus(ctx, tgt)})
-		}
+	for _, tgt := range logger.GlobalSTDOutLogger.GetTargetStats("") {
+		loggerInfo = append(loggerInfo, madmin.Logger{tgt.Name(): targetStatus(tgt)})
 	}
 
-	for _, tgt := range logger.AuditTargets() {
-		if tgt.Endpoint() != "" {
-			auditloggerInfo = append(auditloggerInfo, madmin.Audit{tgt.String(): targetStatus(ctx, tgt)})
-		}
+	for _, tgt := range logger.GlobalAuditLogger.GetTargetStats("") {
+		auditloggerInfo = append(auditloggerInfo, madmin.Audit{tgt.Name(): targetStatus(tgt)})
 	}
 
 	return loggerInfo, auditloggerInfo

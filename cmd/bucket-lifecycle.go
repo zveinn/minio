@@ -716,9 +716,6 @@ func auditTierActions(ctx context.Context, tier string, bytes int64) func(err er
 	startTime := time.Now()
 	return func(err error) {
 		// Record only when audit targets configured.
-		if len(logger.AuditTargets()) == 0 {
-			return
-		}
 
 		op := auditTierOp{
 			Tier:        tier,

@@ -128,9 +128,9 @@ func configLogOnceIf(ctx context.Context, err error, id string, errKind ...inter
 	logger.LogOnceIf(ctx, "config", err, id, errKind...)
 }
 
-func configLogOnceConsoleIf(ctx context.Context, err error, id string, errKind ...interface{}) {
-	logger.LogOnceConsoleIf(ctx, "config", err, id, errKind...)
-}
+// func configLogOnceConsoleIf(ctx context.Context, err error, id string, errKind ...interface{}) {
+// 	logger.LogOnceConsoleIf(ctx, "config", err, id, errKind...)
+// }
 
 func scannerLogIf(ctx context.Context, err error, errKind ...interface{}) {
 	logger.LogIf(ctx, "scanner", err, errKind...)

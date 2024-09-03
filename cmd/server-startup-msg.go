@@ -44,7 +44,7 @@ func printStartupMessage(apiEndpoints []string, err error) {
 	logger.Startup(color.Bold(MinioBannerName))
 	if err != nil {
 		if globalConsoleSys != nil {
-			globalConsoleSys.Send(GlobalContext, fmt.Sprintf("Server startup failed with '%v', some features may be missing", err))
+			globalConsoleSys.Send(fmt.Sprintf("Server startup failed with '%v', some features may be missing", err))
 		}
 	}
 

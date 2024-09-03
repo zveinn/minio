@@ -97,30 +97,31 @@ const (
 
 // Top level config constants.
 const (
-	PolicyOPASubSys      = madmin.PolicyOPASubSys
-	PolicyPluginSubSys   = madmin.PolicyPluginSubSys
-	IdentityOpenIDSubSys = madmin.IdentityOpenIDSubSys
-	IdentityLDAPSubSys   = madmin.IdentityLDAPSubSys
-	IdentityTLSSubSys    = madmin.IdentityTLSSubSys
-	IdentityPluginSubSys = madmin.IdentityPluginSubSys
-	SiteSubSys           = madmin.SiteSubSys
-	RegionSubSys         = madmin.RegionSubSys
-	EtcdSubSys           = madmin.EtcdSubSys
-	StorageClassSubSys   = madmin.StorageClassSubSys
-	APISubSys            = madmin.APISubSys
-	CompressionSubSys    = madmin.CompressionSubSys
-	LoggerWebhookSubSys  = madmin.LoggerWebhookSubSys
-	AuditWebhookSubSys   = madmin.AuditWebhookSubSys
-	AuditKafkaSubSys     = madmin.AuditKafkaSubSys
-	HealSubSys           = madmin.HealSubSys
-	ScannerSubSys        = madmin.ScannerSubSys
-	CrawlerSubSys        = madmin.CrawlerSubSys
-	SubnetSubSys         = madmin.SubnetSubSys
-	CallhomeSubSys       = madmin.CallhomeSubSys
-	DriveSubSys          = madmin.DriveSubSys
-	BatchSubSys          = madmin.BatchSubSys
-	BrowserSubSys        = madmin.BrowserSubSys
-	ILMSubSys            = madmin.ILMSubsys
+	PolicyOPASubSys       = madmin.PolicyOPASubSys
+	PolicyPluginSubSys    = madmin.PolicyPluginSubSys
+	IdentityOpenIDSubSys  = madmin.IdentityOpenIDSubSys
+	IdentityLDAPSubSys    = madmin.IdentityLDAPSubSys
+	IdentityTLSSubSys     = madmin.IdentityTLSSubSys
+	IdentityPluginSubSys  = madmin.IdentityPluginSubSys
+	SiteSubSys            = madmin.SiteSubSys
+	RegionSubSys          = madmin.RegionSubSys
+	EtcdSubSys            = madmin.EtcdSubSys
+	StorageClassSubSys    = madmin.StorageClassSubSys
+	APISubSys             = madmin.APISubSys
+	CompressionSubSys     = madmin.CompressionSubSys
+	AuditEventQueueSubSys = madmin.AuditEventQueueSubSys
+	LoggerWebhookSubSys   = madmin.LoggerWebhookSubSys
+	AuditWebhookSubSys    = madmin.AuditWebhookSubSys
+	AuditKafkaSubSys      = madmin.AuditKafkaSubSys
+	HealSubSys            = madmin.HealSubSys
+	ScannerSubSys         = madmin.ScannerSubSys
+	CrawlerSubSys         = madmin.CrawlerSubSys
+	SubnetSubSys          = madmin.SubnetSubSys
+	CallhomeSubSys        = madmin.CallhomeSubSys
+	DriveSubSys           = madmin.DriveSubSys
+	BatchSubSys           = madmin.BatchSubSys
+	BrowserSubSys         = madmin.BrowserSubSys
+	ILMSubSys             = madmin.ILMSubsys
 
 	// Add new constants here (similar to above) if you add new fields to config.
 )
@@ -165,6 +166,11 @@ var LambdaSubSystems = set.CreateStringSet(
 	LambdaWebhookSubSys,
 )
 
+// EventQueueSubsystem - global event queueing sub-system
+var EventQueueSubsystem = set.CreateStringSet(
+	AuditEventQueueSubSys,
+)
+
 // LoggerSubSystems - all sub-systems related to logger
 var LoggerSubSystems = set.CreateStringSet(
 	LoggerWebhookSubSys,
@@ -184,6 +190,7 @@ var SubSystemsDynamic = set.CreateStringSet(
 	SubnetSubSys,
 	CallhomeSubSys,
 	DriveSubSys,
+	AuditEventQueueSubSys,
 	LoggerWebhookSubSys,
 	AuditWebhookSubSys,
 	AuditKafkaSubSys,

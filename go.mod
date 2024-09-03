@@ -136,6 +136,7 @@ require (
 	github.com/fatih/structs v1.1.0 // indirect
 	github.com/felixge/httpsnoop v1.0.4 // indirect
 	github.com/frankban/quicktest v1.14.4 // indirect
+	github.com/fxamacker/cbor/v2 v2.7.0 // indirect
 	github.com/go-asn1-ber/asn1-ber v1.5.7 // indirect
 	github.com/go-ini/ini v1.67.0 // indirect
 	github.com/go-jose/go-jose/v4 v4.0.4 // indirect
@@ -234,6 +235,7 @@ require (
 	github.com/tklauser/numcpus v0.8.0 // indirect
 	github.com/unrolled/secure v1.15.0 // indirect
 	github.com/vbauerster/mpb/v8 v8.8.2 // indirect
+	github.com/x448/float16 v0.8.4 // indirect
 	github.com/xdg/stringprep v1.0.3 // indirect
 	github.com/yusufpapurcu/wmi v1.2.4 // indirect
 	go.etcd.io/etcd/client/pkg/v3 v3.5.15 // indirect

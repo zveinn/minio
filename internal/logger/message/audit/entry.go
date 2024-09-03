@@ -32,8 +32,8 @@ import (
 const Version = "1"
 
 // NewEntry - constructs an audit entry object with some fields filled
-func NewEntry(deploymentID string) audit.Entry {
-	return audit.Entry{
+func NewEntry(deploymentID string) *audit.Entry {
+	return &audit.Entry{
 		Version:      Version,
 		DeploymentID: deploymentID,
 		Time:         time.Now().UTC(),
@@ -41,7 +41,7 @@ func NewEntry(deploymentID string) audit.Entry {
 }
 
 // ToEntry - constructs an audit entry from a http request
-func ToEntry(w http.ResponseWriter, r *http.Request, reqClaims map[string]interface{}, deploymentID string) audit.Entry {
+func ToEntry(w http.ResponseWriter, r *http.Request, reqClaims map[string]interface{}, deploymentID string) *audit.Entry {
 	entry := NewEntry(deploymentID)
 
 	entry.RemoteHost = handlers.GetSourceIP(r)

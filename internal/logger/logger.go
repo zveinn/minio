@@ -52,11 +52,12 @@ const (
 	InfoKind    = madmin.LogKindInfo
 )
 
+// DisableErrorLog avoids printing error/event/info kind of logs
+var DisableLog = false
+
+// Writer allows configuring custom writer, defaults to os.Stderr
 var (
-	// DisableLog avoids printing error/event/info kind of logs
-	DisableLog = false
-	// Output allows configuring custom writer, defaults to os.Stderr
-	Output io.Writer = os.Stderr
+	Writer io.WriteCloser = os.Stderr
 )
 
 var trimStrings []string
@@ -383,21 +384,6 @@ func buildLogEntry(ctx context.Context, subsystem, message string, trace []strin
 	return entry
 }
 
-// consoleLogIf prints a detailed error message during
-// the execution of the server.
-func consoleLogIf(ctx context.Context, subsystem string, err error, errKind ...interface{}) {
-	if DisableLog {
-		return
-	}
-	if err == nil {
-		return
-	}
-	if consoleTgt != nil {
-		entry := errToEntry(ctx, subsystem, err, errKind...)
-		consoleTgt.Send(ctx, entry)
-	}
-}
-
 // logIf prints a detailed error message during
 // the execution of the server.
 func logIf(ctx context.Context, subsystem string, err error, errKind ...interface{}) {
@@ -407,23 +393,13 @@ func logIf(ctx context.Context, subsystem string, err error, errKind ...interfac
 	if err == nil {
 		return
 	}
-	entry := errToEntry(ctx, subsystem, err, errKind...)
-	sendLog(ctx, entry)
+	sendLog(errToEntry(ctx, subsystem, err, errKind...))
 }
 
-func sendLog(ctx context.Context, entry log.Entry) {
-	systemTgts := SystemTargets()
-	if len(systemTgts) == 0 {
-		return
-	}
-
-	// Iterate over all logger targets to send the log entry
-	for _, t := range systemTgts {
-		if err := t.Send(ctx, entry); err != nil {
-			if consoleTgt != nil { // Sending to the console never fails
-				consoleTgt.Send(ctx, errToEntry(ctx, "logging", fmt.Errorf("unable to send log event to Logger target (%s): %v", t.String(), err), entry.Level))
-			}
-		}
+func sendLog(entry log.Entry) {
+	select {
+	case GlobalSTDOutLogger.Ch <- &entry:
+	default:
 	}
 }
 
@@ -432,8 +408,7 @@ func Event(ctx context.Context, subsystem, msg string, args ...interface{}) {
 	if DisableLog {
 		return
 	}
-	entry := logToEntry(ctx, subsystem, fmt.Sprintf(msg, args...), EventKind)
-	sendLog(ctx, entry)
+	sendLog(logToEntry(ctx, subsystem, fmt.Sprintf(msg, args...), EventKind))
 }
 
 // ErrCritical is the value panic'd whenever CriticalIf is called.

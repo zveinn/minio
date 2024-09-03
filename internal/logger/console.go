@@ -28,9 +28,6 @@ import (
 	"github.com/minio/pkg/v3/logger/message/log"
 )
 
-// ConsoleLoggerTgt is a stringified value to represent console logging
-const ConsoleLoggerTgt = "console+http"
-
 // ExitFunc is called by Fatal() class functions, by default it calls os.Exit()
 var ExitFunc = os.Exit
 
@@ -101,7 +98,7 @@ func (f fatalMsg) json(msg string, args ...interface{}) {
 	if err != nil {
 		panic(err)
 	}
-	fmt.Fprintln(Output, string(logJSON))
+	fmt.Fprintln(Writer, string(logJSON))
 	ExitFunc(1)
 }
 
@@ -140,16 +137,16 @@ func (f fatalMsg) pretty(msg string, args ...interface{}) {
 			ansiSaveAttributes()
 			// Print banner with or without the log tag
 			if !tagPrinted {
-				fmt.Fprint(Output, logBanner)
+				fmt.Fprint(Writer, logBanner)
 				tagPrinted = true
 			} else {
-				fmt.Fprint(Output, emptyBanner)
+				fmt.Fprint(Writer, emptyBanner)
 			}
 			// Restore the text color of the error message
 			ansiRestoreAttributes()
 			ansiMoveRight(bannerWidth)
 			// Continue  error message printing
-			fmt.Fprintln(Output, line)
+			fmt.Fprintln(Writer, line)
 			break
 		}
 	}
@@ -177,7 +174,7 @@ func (i infoMsg) json(msg string, args ...interface{}) {
 	if err != nil {
 		panic(err)
 	}
-	fmt.Fprintln(Output, string(logJSON))
+	fmt.Fprintln(Writer, string(logJSON))
 }
 
 func (i infoMsg) quiet(msg string, args ...interface{}) {
@@ -185,9 +182,9 @@ func (i infoMsg) quiet(msg string, args ...interface{}) {
 
 func (i infoMsg) pretty(msg string, args ...interface{}) {
 	if msg == "" {
-		fmt.Fprintln(Output, args...)
+		fmt.Fprintln(Writer, args...)
 	} else {
-		fmt.Fprintf(Output, `INFO: `+msg, args...)
+		fmt.Fprintf(Writer, msg, args...)
 	}
 }
 
@@ -211,7 +208,7 @@ func (i errorMsg) json(msg string, args ...interface{}) {
 	if err != nil {
 		panic(err)
 	}
-	fmt.Fprintln(Output, string(logJSON))
+	fmt.Fprintln(Writer, string(logJSON))
 }
 
 func (i errorMsg) quiet(msg string, args ...interface{}) {
@@ -220,9 +217,9 @@ func (i errorMsg) quiet(msg string, args ...interface{}) {
 
 func (i errorMsg) pretty(msg string, args ...interface{}) {
 	if msg == "" {
-		fmt.Fprintln(Output, args...)
+		fmt.Fprintln(Writer, args...)
 	} else {
-		fmt.Fprintf(Output, `ERRO: `+msg, args...)
+		fmt.Fprintf(Writer, msg, args...)
 	}
 }
 
@@ -269,7 +266,7 @@ func (i startupMsg) json(msg string, args ...interface{}) {
 	if err != nil {
 		panic(err)
 	}
-	fmt.Fprintln(Output, string(logJSON))
+	fmt.Fprintln(Writer, string(logJSON))
 }
 
 func (i startupMsg) quiet(msg string, args ...interface{}) {
@@ -277,9 +274,9 @@ func (i startupMsg) quiet(msg string, args ...interface{}) {
 
 func (i startupMsg) pretty(msg string, args ...interface{}) {
 	if msg == "" {
-		fmt.Fprintln(Output, args...)
+		fmt.Fprintln(Writer, args...)
 	} else {
-		fmt.Fprintf(Output, msg, args...)
+		fmt.Fprintf(Writer, msg, args...)
 	}
 }
 
@@ -303,7 +300,7 @@ func (i warningMsg) json(msg string, args ...interface{}) {
 	if err != nil {
 		panic(err)
 	}
-	fmt.Fprintln(Output, string(logJSON))
+	fmt.Fprintln(Writer, string(logJSON))
 }
 
 func (i warningMsg) quiet(msg string, args ...interface{}) {
@@ -312,9 +309,9 @@ func (i warningMsg) quiet(msg string, args ...interface{}) {
 
 func (i warningMsg) pretty(msg string, args ...interface{}) {
 	if msg == "" {
-		fmt.Fprintln(Output, args...)
+		fmt.Fprintln(Writer, args...)
 	} else {
-		fmt.Fprintf(Output, `WARN: `+msg, args...)
+		fmt.Fprintf(Writer, `WARN: `+msg, args...)
 	}
 }
 

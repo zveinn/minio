@@ -110,8 +110,19 @@ func TestMain(m *testing.M) {
 	// Set system resources to maximum.
 	setMaxResources(serverCtxt{})
 
+	ctx := context.Background()
+	err := logger.InitializeGlobalEventQueues(ctx)
+	if err != nil {
+		panic("unable to initialize global logging system")
+	}
+
 	// Initialize globalConsoleSys system
-	globalConsoleSys = NewConsoleLogger(context.Background(), io.Discard)
+	globalConsoleSys = logger.NewConsolePubSubTarget(
+		GlobalContext,
+		globalIsDistErasure,
+		globalLocalNodeName,
+		os.Stderr,
+	)
 
 	globalInternodeTransport = NewInternodeHTTPTransport(0)()
 

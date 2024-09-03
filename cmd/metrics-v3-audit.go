@@ -24,10 +24,17 @@ import (
 )
 
 const (
-	auditFailedMessages    = "failed_messages"
-	auditTargetQueueLength = "target_queue_length"
-	auditTotalMessages     = "total_messages"
-	targetID               = "target_id"
+	auditFailedMessages           = "failed_messages"
+	auditTargetQueueLength        = "target_queue_length"
+	auditTotalMessages            = "total_messages"
+	targetID                      = "target_id"
+	totalID                       = "total"
+	auditGlobalQueueSize          = "global_queue_size"
+	auditTotalTargets             = "total_targets"
+	auditTotalBatchesSentToStdout = "total_batches_to_stdout"
+	auditRequestsTotal            = "total_requests"
+	auditRequestsFailed           = "failed_requests"
+	auditWorkerCount              = "worker_count"
 )
 
 var (
@@ -35,22 +42,56 @@ var (
 		"Total number of messages that failed to send since start",
 		targetID)
 	auditTargetQueueLengthMD = NewGaugeMD(auditTargetQueueLength,
-		"Number of unsent messages in queue for target",
+		"Number of unsent messages or batches in queue for target",
 		targetID)
 	auditTotalMessagesMD = NewCounterMD(auditTotalMessages,
 		"Total number of messages sent since start",
 		targetID)
+	auditGlobalQueueSizeMD = NewCounterMD(auditGlobalQueueSize,
+		"Total number of messages in queue for all targets",
+		targetID)
+	auditTotalTargetsMD = NewCounterMD(auditTotalTargets,
+		"Total number of audit endpoint targets",
+		targetID)
+
+	auditRequestsTotalMD = NewCounterMD(auditRequestsTotal,
+		"Total number of requests made to the audit endpoint",
+		targetID)
+
+	auditRequestsFailedMD = NewCounterMD(auditRequestsFailed,
+		"Total number of requests failed sending to the audit endpoint",
+		targetID)
+
+	auditWorkerCountMD = NewCounterMD(auditWorkerCount,
+		"Total number of async workers",
+		targetID)
 )
 
 // loadAuditMetrics - `MetricsLoaderFn` for audit
-// such as failed messages and total messages.
 func loadAuditMetrics(_ context.Context, m MetricValues, c *metricsCache) error {
-	audit := logger.CurrentStats()
-	for id, st := range audit {
+	s := logger.AduitStatsV3()
+	labels := []string{targetID, totalID}
+	m.Set(auditGlobalQueueSize, float64(s.GlobalQueueSize), labels...)
+	m.Set(auditTotalTargets, float64(s.TotalTargets), labels...)
+
+	// m.Set(auditTargetQueueLength, float64(s.Totals.QueueLength), labels...)
+	//
+	// m.Set(auditTotalMessages, float64(s.Totals.TotalMessages), labels...)
+	// m.Set(auditFailedMessages, float64(s.Totals.FailedMessages), labels...)
+	//
+	// m.Set(auditRequestsTotal, float64(s.Totals.TotalRequests), labels...)
+	// m.Set(auditRequestsFailed, float64(s.Totals.FailedRequests), labels...)
+	//
+	// m.Set(auditWorkerCount, float64(s.Totals.TotalWorkers), labels...)
+
+	for id, st := range s.Targets {
 		labels := []string{targetID, id}
 		m.Set(auditFailedMessages, float64(st.FailedMessages), labels...)
 		m.Set(auditTargetQueueLength, float64(st.QueueLength), labels...)
 		m.Set(auditTotalMessages, float64(st.TotalMessages), labels...)
+		m.Set(auditRequestsTotal, float64(st.TotalRequests), labels...)
+		m.Set(auditRequestsFailed, float64(st.FailedRequests), labels...)
+		m.Set(auditWorkerCount, float64(st.TotalWorkers), labels...)
 	}
 
 	return nil

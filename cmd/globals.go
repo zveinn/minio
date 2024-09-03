@@ -37,6 +37,7 @@ import (
 	"github.com/minio/minio/internal/grid"
 	"github.com/minio/minio/internal/handlers"
 	"github.com/minio/minio/internal/kms"
+	"github.com/minio/minio/internal/logger"
 	"go.uber.org/atomic"
 
 	"github.com/dustin/go-humanize"
@@ -271,7 +272,7 @@ var (
 
 	// global console system to send console logs to
 	// registered listeners
-	globalConsoleSys *HTTPConsoleLoggerSys
+	globalConsoleSys *logger.ConsolePubSubTarget
 
 	// All unique drives for this deployment
 	globalEndpoints EndpointServerPools

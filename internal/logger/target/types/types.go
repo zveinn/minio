@@ -40,4 +40,24 @@ type TargetStats struct {
 
 	// FailedMessages should log message count that failed to send.
 	FailedMessages int64
+
+	// TotalRequests logs the total number of requests made
+	TotalRequests int64
+
+	// FailedRequests logs the number of failed network requests to the target endpoint
+	FailedRequests int64
+
+	// Total number of active async workers
+	TotalWorkers int64
 }
+
+// EncoderType defines the specific encoding used
+// for each logger target
+
+type EncoderType string
+
+const (
+	EncoderNone EncoderType = "none"
+	EncoderJSON EncoderType = "json"
+	EncoderCBOR EncoderType = "cbor"
+)

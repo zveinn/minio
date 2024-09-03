@@ -915,7 +915,7 @@ type AuditLogOptions struct {
 
 // sends audit logs for internal subsystem activity
 func auditLogInternal(ctx context.Context, opts AuditLogOptions) {
-	if len(logger.AuditTargets()) == 0 {
+	if logger.GlobalAuditLogger.TargetCount.Load() == 0 {
 		return
 	}
 
@@ -937,7 +937,7 @@ func auditLogInternal(ctx context.Context, opts AuditLogOptions) {
 	if reqInfo := logger.GetReqInfo(ctx); reqInfo != nil {
 		reqInfo.PopulateTagsMap(opts.Tags)
 	}
-	ctx = logger.SetAuditEntry(ctx, &entry)
+	ctx = logger.SetAuditEntry(ctx, entry)
 	logger.AuditLog(ctx, nil, nil, nil)
 }
 
